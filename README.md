@@ -3,7 +3,7 @@
 **The unified in-memory memory layer every AI agent has been missing.**
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Spec](https://img.shields.io/badge/AQL%20spec-v0.3-teal.svg)](spec/AQL_SPEC_v0.3.md)
+[![Spec](https://img.shields.io/badge/AQL%20spec-v0.4-teal.svg)](spec/AQL_SPEC_v0.4.md)
 [![Status](https://img.shields.io/badge/status-specification%20%2B%20reference%20implementation-orange.svg)]()
 
 ---
@@ -45,66 +45,50 @@ ADB runs as a sidecar process in the same isolated container as the agent. No ne
 
 ## AQL — Agent Query Language
 
-AQL is an open specification for querying agent memory. Its verbs encode agentic intent, not just predicates.
+AQL is an open specification for querying agent memory. Its verbs encode agentic intent, not just predicates. **If a non-expert can't read a query and understand it, the feature gets cut.**
 
 ```sql
--- Load relevant tools for current task
+-- Load relevant tools
 LOAD TOOLS WHERE relevance > 0.8
   ORDER BY ranking DESC
   LIMIT 3
-  RETURN tool_id, schema, token_cost
 
--- Recall with quality filter and storage tier
-RECALL EPISODIC WHERE pod="payments-api"
+-- Recall with quality filter
+RECALL EPISODIC WHERE pod = "payments-api"
   MIN_CONFIDENCE 0.7
-  TIER hot, warm
-  RETURN incident_id, action, resolved, confidence
-  ORDER BY time DESC LIMIT 5
+  ORDER BY time DESC
+  LIMIT 5
 
--- Store with strength, scope, and namespace
+-- Store shared knowledge
 STORE SEMANTIC (
-  concept   = "k8s_oom_pattern",
-  knowledge = "payments-api OOMs every Friday after batch job"
+  concept = "k8s_oom_pattern",
+  knowledge = "payments-api OOMs every Friday"
 )
-  STRENGTH 0.87
-  TTL 90d
   SCOPE shared
-  NAMESPACE cluster="platform-agents"
-  IF NOT EXISTS
+  NAMESPACE "platform-agents"
 
--- Forget with decay model
-FORGET EPISODIC
-  WHERE activation < 0.3
-  DECAY lambda=0.5 offset=0.1
-  STRATEGY soft_delete
+-- Forget old memories
+FORGET EPISODIC WHERE last_accessed > 30d
 
--- Multi-agent REFLECT with consistency checks
-REFLECT incident_id={current}
-  INCLUDE EPISODIC WHERE incident_id={current}
-  INCLUDE PROCEDURAL WHERE pattern_id={matched}
+-- Assemble context for LLM
+REFLECT incident_id = {current}
+  INCLUDE EPISODIC WHERE incident_id = {current}
+  INCLUDE PROCEDURAL WHERE pattern_id = {matched}
   INCLUDE WORKING
-  CHECK temporal, factual, logical
-  RESOLVE CONFLICTS = merge
-  NAMESPACE cluster="platform-agents"
 
--- Full pipeline with hard timeout
+-- Full pipeline with timeout
 PIPELINE bid_decision TIMEOUT 80ms
-  LOAD TOOLS WHERE task="bid_evaluation" LIMIT 3
-  | LOOKUP SEMANTIC KEY url={url}
-      MIN_CONFIDENCE 0.8
-      TIER hot
-  | RECALL EPISODIC WHERE url={url}
-      TIER hot, warm
-      LIMIT 10
-  | REFLECT url={url}
-      INCLUDE EPISODIC
+  LOAD TOOLS WHERE task = "bidding" LIMIT 3
+  | LOOKUP SEMANTIC KEY url = {url}
+  | RECALL EPISODIC WHERE url = {url} LIMIT 10
+  | REFLECT url = {url}
       INCLUDE SEMANTIC
-      CHECK temporal, factual
+      INCLUDE EPISODIC
 ```
 
-**AQL's core design principle:** AQL retrieves and stores. It does not decide. The LLM owns what happens next.
+**AQL's core design principle:** AQL expresses intent. ADB handles implementation. The LLM decides what happens next.
 
-→ [Full AQL v0.3 Specification](spec/AQL_SPEC_v0.3.md)
+→ [Full AQL v0.4 Specification](spec/AQL_SPEC_v0.4.md)
 
 ## Key Design Decisions
 
@@ -193,38 +177,44 @@ AQL/
 
 | Component | Status |
 |-----------|--------|
-| AQL v0.3 spec | Published |
+| AQL v0.4 spec | Published |
 | PEG grammar (pest) | Published |
 | aql-parser crate | In progress |
 | ADB reference implementation | Planned |
 | ADB MCP server | Planned — week of March 31 |
 | FlowR integration | Planned |
-| Arrow Flight IPC | Planned |
 | CNCF submission | Planned — Q3 2026 |
 
-## What's New in v0.3
+## What's New in v0.4
 
-- **FORGET statement** — explicit memory lifecycle with decay models (`DECAY lambda=0.5 offset=0.1`) and strategies (`soft_delete`, `compress`, `hard_delete`, `archive`)
-- **LOAD TOOLS / UPDATE TOOLS** — first-class verbs for tool registry
-- **STRENGTH modifier** — importance weighting on STORE (0.0 - 1.0)
-- **TTL modifier** — time-to-live for automatic expiration
-- **SCOPE modifier** — `private | shared | cluster` for multi-agent isolation
-- **NAMESPACE modifier** — agent identity for memory isolation
-- **MIN_CONFIDENCE modifier** — quality filter on RECALL
-- **TIER modifier** — `hot | warm | cold | archive` storage tier selection
-- **IF NOT EXISTS** — conditional STORE
-- **VERSION / LOCK** — optimistic and pessimistic concurrency control
-- **CHECK clause** — reflection consistency dimensions (`temporal`, `factual`, `logical`, `causal`)
-- **RESOLVE CONFLICTS** — conflict resolution strategies (`merge`, `replace`, `flag`, `newest`, `highest_confidence`)
+**The SQL lesson:** AQL should read like English. If a non-expert can't understand a query, cut the feature.
+
+v0.4 removes implementation details that leaked into the grammar:
+
+| Removed | Reason |
+|---------|--------|
+| `DECAY lambda=...` | ADB handles decay algorithms |
+| `STRATEGY soft_delete` | ADB decides how to forget |
+| `TIER hot\|warm\|cold` | ADB manages storage placement |
+| `CHECK temporal` | ADB validates consistency |
+| `RESOLVE CONFLICTS` | ADB handles conflicts |
+| `STRENGTH` | ADB computes importance |
+| `VERSION` / `LOCK` | ADB handles concurrency |
+
+**What remains — only intent:**
+- `LOAD TOOLS` — new retrieval verb
+- `SCOPE private|shared|cluster` — multi-agent isolation
+- `NAMESPACE "..."` — agent identity
+- `MIN_CONFIDENCE` — quality filter
+- `FORGET` — simple predicate, no parameters
+
+**Grammar size:** v0.4 is only 20% larger than v0.1, with full multi-agent and tool support. v0.3 was 80% larger.
 
 ## Roadmap — Open Questions
 
 1. **Embedding literals** — how does a caller pass a live embedding vector into a `LIKE` predicate?
 2. **Streaming RECALL** — should episodic recall support streaming for long histories?
-3. **Tool eviction** — when working memory is full, which tools get evicted first?
-4. **Cross-cluster memory** — federation across multiple ADB instances?
-5. **Encryption** — per-agent encryption keys for regulated industries?
-6. **Compression strategies** — what summarization algorithm for `STRATEGY compress`?
+3. **Cross-cluster memory** — federation across multiple ADB instances?
 
 ## Contributing
 
@@ -256,5 +246,6 @@ AQL specification and ADB architecture are free to use, implement, and build upo
 *AQL v0.1 · March 2026 · Initial specification*
 *AQL v0.2 · March 2026 · Working memory as assembly layer, Tool Registry*
 *AQL v0.3 · March 2026 · FORGET, DECAY, SCOPE, NAMESPACE, CHECK, RESOLVE*
+*AQL v0.4 · March 2026 · Simplified — removed implementation details, kept intent*
 
 *Sriram Reddy · The unified memory layer every AI agent has been missing.*

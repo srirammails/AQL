@@ -1,6 +1,9 @@
 // AQL — Agent Query Language
 // PEG Grammar for pest parser
-// Version 0.3
+// Version 0.4 — Simplified
+//
+// Design principle: AQL expresses intent, not implementation.
+// If a non-expert can't read it, cut it.
 
 // =============================================================================
 // Top-Level
@@ -12,7 +15,6 @@ statement = {
     pipeline_stmt
     | reflect_stmt
     | forget_stmt
-    | tool_stmt
     | write_stmt
     | read_stmt
 }
@@ -23,7 +25,7 @@ statement = {
 
 read_stmt = { verb ~ memory_type? ~ predicate ~ modifier* }
 
-verb = { "LOOKUP" | "RECALL" | "SCAN" }
+verb = { "LOAD" | "LOOKUP" | "RECALL" | "SCAN" }
 
 memory_type = {
     "EPISODIC"
@@ -53,17 +55,13 @@ scan_pred = { "ALL" | where_pred }
 
 condition = { condition_term ~ (condition_op ~ condition_term)* }
 
-condition_term = {
-    "(" ~ condition ~ ")"
-    | "NOT" ~ condition_term
-    | field_condition
-}
+condition_term = { "(" ~ condition ~ ")" | field_condition }
 
 field_condition = { field ~ comparator ~ value }
 
 condition_op = { "AND" | "OR" }
 
-comparator = { ">=" | "<=" | "!=" | "=" | ">" | "<" | "~" | "IN" }
+comparator = { ">=" | "<=" | "!=" | "=" | ">" | "<" }
 
 expression = { embedding_ref | variable | string_literal }
 
@@ -75,91 +73,42 @@ write_stmt = { store_stmt | update_stmt | link_stmt }
 
 store_stmt = {
     "STORE" ~ memory_type ~ payload
-    ~ strength_mod?
-    ~ ttl_mod?
     ~ scope_mod?
     ~ namespace_mod?
-    ~ condition_mod?
-    ~ modifier*
+    ~ ttl_mod?
 }
 
 update_stmt = {
     "UPDATE" ~ memory_type ~ "WHERE" ~ condition ~ payload
-    ~ concurrency_mod?
-    ~ namespace_mod?
 }
 
 link_stmt = {
     "LINK" ~ memory_type ~ key_expr
     ~ "TO" ~ memory_type ~ key_expr
-    ~ weight_mod?
 }
 
-payload = {
-    "(" ~ field_value_list ~ ")"
-    | "FROM" ~ ("THIS_EPISODE" | identifier)
-}
+payload = { "(" ~ field_value_list ~ ")" }
 
 field_value_list = { field_value ~ ("," ~ field_value)* }
 
 field_value = { field ~ "=" ~ value }
 
-strength_mod = { "STRENGTH" ~ float }
-
-ttl_mod = { "TTL" ~ duration }
-
 scope_mod = { "SCOPE" ~ scope_value }
 
 scope_value = { "private" | "shared" | "cluster" }
 
-namespace_mod = { "NAMESPACE" ~ namespace_expr }
+namespace_mod = { "NAMESPACE" ~ string_literal }
 
-namespace_expr = { identifier ~ "=" ~ string_literal }
-
-condition_mod = { "IF" ~ "NOT" ~ "EXISTS" }
-
-concurrency_mod = { version_mod | lock_mod }
-
-version_mod = { "VERSION" ~ integer }
-
-lock_mod = { "LOCK" ~ lock_mode }
-
-lock_mode = { "optimistic" | "pessimistic" }
+ttl_mod = { "TTL" ~ duration }
 
 // =============================================================================
-// Forget Statements
+// Forget Statement — Simple, no implementation details
 // =============================================================================
 
-forget_stmt = {
-    "FORGET" ~ memory_type ~ predicate
-    ~ decay_clause?
-    ~ strategy_clause?
-    ~ namespace_mod?
-}
-
-decay_clause = { "DECAY" ~ decay_params }
-
-decay_params = { "lambda" ~ "=" ~ float ~ "offset" ~ "=" ~ float }
-
-strategy_clause = { "STRATEGY" ~ strategy_value }
-
-strategy_value = { "soft_delete" | "compress" | "hard_delete" | "archive" }
+forget_stmt = { "FORGET" ~ memory_type ~ predicate }
 
 // =============================================================================
-// Tool Statements
-// =============================================================================
-
-tool_stmt = { load_tools_stmt | update_tools_stmt }
-
-load_tools_stmt = { "LOAD" ~ "TOOLS" ~ predicate? ~ modifier* }
-
-update_tools_stmt = {
-    "UPDATE" ~ "TOOLS" ~ "WHERE" ~ condition ~ payload
-    ~ namespace_mod?
-}
-
-// =============================================================================
-// Modifiers
+// Modifiers — Only what expresses intent
 // =============================================================================
 
 modifier = {
@@ -167,14 +116,10 @@ modifier = {
     | limit_mod
     | weight_mod
     | threshold_mod
-    | depth_mod
-    | decay_mod
     | timeout_mod
-    | priority_mod
-    | source_mod
     | order_mod
     | confidence_mod
-    | tier_mod
+    | source_mod
 }
 
 return_mod = { "RETURN" ~ field_list }
@@ -183,23 +128,11 @@ field_list = { field ~ ("," ~ field)* }
 
 limit_mod = { "LIMIT" ~ integer }
 
-weight_mod = { "WEIGHT" ~ (field | float) }
+weight_mod = { "WEIGHT" ~ field }
 
 threshold_mod = { "THRESHOLD" ~ float }
 
-depth_mod = { "DEPTH" ~ integer }
-
-decay_mod = { "DECAY" ~ duration }
-
 timeout_mod = { "TIMEOUT" ~ duration }
-
-priority_mod = { "PRIORITY" ~ priority_value }
-
-priority_value = { "CRITICAL" | "HIGH" | "NORMAL" | "LOW" }
-
-source_mod = { "FROM" ~ source_list }
-
-source_list = { identifier ~ ("," ~ identifier)* }
 
 order_mod = { "ORDER" ~ "BY" ~ field ~ sort_dir? }
 
@@ -207,25 +140,21 @@ sort_dir = { "ASC" | "DESC" }
 
 confidence_mod = { "MIN_CONFIDENCE" ~ float }
 
-tier_mod = { "TIER" ~ tier_list }
+source_mod = { "FROM" ~ identifier_list }
 
-tier_list = { tier_name ~ ("," ~ tier_name)* }
-
-tier_name = { "hot" | "warm" | "cold" | "archive" }
+identifier_list = { identifier ~ ("," ~ identifier)* }
 
 duration = { integer ~ time_unit }
 
 time_unit = { "ms" | "s" | "m" | "h" | "d" }
 
 // =============================================================================
-// Reflect Statement
+// Reflect Statement — Assembles context, ADB handles consistency
 // =============================================================================
 
 reflect_stmt = {
     "REFLECT" ~ context_expr
-    ~ reflect_source*
-    ~ check_clause?
-    ~ resolve_clause?
+    ~ reflect_source+
     ~ modifier*
     ~ then_clause?
 }
@@ -233,16 +162,6 @@ reflect_stmt = {
 context_expr = { key_expr | identifier }
 
 reflect_source = { "INCLUDE" ~ memory_type ~ predicate? }
-
-check_clause = { "CHECK" ~ check_list }
-
-check_list = { check_dim ~ ("," ~ check_dim)* }
-
-check_dim = { "temporal" | "factual" | "logical" | "causal" }
-
-resolve_clause = { "RESOLVE" ~ "CONFLICTS" ~ "=" ~ resolve_strategy }
-
-resolve_strategy = { "merge" | "replace" | "flag" | "newest" | "highest_confidence" }
 
 then_clause = { "THEN" ~ write_stmt }
 
@@ -258,7 +177,7 @@ pipeline_stmt = {
 
 pipeline_stage = { stage_stmt ~ pipeline_op? }
 
-stage_stmt = { read_stmt | tool_stmt | reflect_stmt }
+stage_stmt = { read_stmt | reflect_stmt }
 
 pipeline_op = { "|" }
 
@@ -273,9 +192,7 @@ identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 field = { identifier ~ ("." ~ identifier)? }
 
 value = {
-    now_fn
-    | array_literal
-    | float
+    float
     | integer
     | boolean
     | embedding_ref
@@ -283,26 +200,19 @@ value = {
     | string_literal
 }
 
-now_fn = { "now()" }
-
 string_literal = @{
     "\"" ~ (!"\"" ~ ANY)* ~ "\""
-    | "'" ~ (!"'" ~ ANY)* ~ "'"
 }
 
-integer = @{ "-"? ~ ASCII_DIGIT+ }
+integer = @{ ASCII_DIGIT+ }
 
-float = @{ "-"? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
+float = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
 
 boolean = { "true" | "false" }
 
 embedding_ref = { "$" ~ identifier }
 
 variable = { "{" ~ identifier ~ "}" }
-
-array_literal = { "[" ~ value_list? ~ "]" }
-
-value_list = { value ~ ("," ~ value)* }
 
 // =============================================================================
 // Whitespace and Comments
