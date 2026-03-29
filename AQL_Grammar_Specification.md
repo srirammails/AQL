@@ -1,15 +1,16 @@
 # AQL — Agent Query Language
-## Formal Grammar Specification v0.1
+## Formal Grammar Specification v0.2
 
 ---
 
 ## 1. Design Principles
 
 1. **AQL is a retrieval and storage language, not a decision language.** It populates agent context. The LLM reasons over that context.
-2. **Every statement is scoped to a memory type.** Episodic, Semantic, Procedural, or Working.
-3. **Working memory is always in-process.** Sub-millisecond. Never blocks on other memory types.
-4. **Retrieval mode is explicit.** The verb encodes intent, not just predicate.
-5. **Pipelines are first-class.** Agentic queries chain across memory types with a time budget.
+2. **Every statement is scoped to a memory type.** Episodic, Semantic, Procedural, Working, or Tools.
+3. **Working memory is the assembly layer.** It's the prepared context package — everything the agent needs for the next reasoning step, pre-loaded and ready. Sub-millisecond. Never blocks.
+4. **Tool Registry is a first-class memory type.** Available tools, rankings, and token costs are queryable like any other memory.
+5. **Retrieval mode is explicit.** The verb encodes intent, not just predicate.
+6. **Pipelines are first-class.** Agentic queries chain across memory types with a time budget.
 
 ---
 
@@ -35,11 +36,13 @@ read_stmt       ::= verb memory_type? predicate modifier*
 verb            ::= "LOOKUP"
                   | "RECALL"
                   | "SCAN"
+                  | "LOAD"
 
 memory_type     ::= "EPISODIC"
                   | "SEMANTIC"
                   | "PROCEDURAL"
                   | "WORKING"
+                  | "TOOLS"
 
 predicate       ::= exact_pred
                   | similarity_pred
@@ -67,9 +70,10 @@ comparator      ::= "=" | "!=" | ">" | "<" | ">=" | "<=" | "~"
 
 | Verb | Memory Types | Retrieval Mode |
 |------|-------------|----------------|
-| LOOKUP | SEMANTIC, PROCEDURAL | Exact key or pattern match |
+| LOOKUP | SEMANTIC, PROCEDURAL, TOOLS | Exact key or pattern match |
 | RECALL | EPISODIC, SEMANTIC | Similarity / context match |
-| SCAN | WORKING | Full scan of active state |
+| SCAN | WORKING | Full scan of assembled context |
+| LOAD | TOOLS | Select and activate tools into working memory |
 
 ---
 
@@ -322,12 +326,81 @@ LINK SEMANTIC concept_id="k8s_oom"
 ## 10. Memory Type Characteristics
 
 ```
-Memory Type  │ Retrieval Trigger    │ Return Type        │ Latency Target
-─────────────┼──────────────────────┼────────────────────┼────────────────
-WORKING      │ Direct scan          │ Active state       │ < 1ms
-PROCEDURAL   │ Pattern / goal match │ Executable steps   │ < 5ms
-SEMANTIC     │ Concept similarity   │ Structured facts   │ < 20ms
-EPISODIC     │ Context / time cue   │ Event sequences    │ < 50ms
+Memory Type  │ Retrieval Trigger    │ Return Type           │ Latency Target
+─────────────┼──────────────────────┼───────────────────────┼────────────────
+WORKING      │ Direct scan          │ Assembled context     │ < 1ms
+TOOLS        │ Task relevance       │ Tool schemas + costs  │ < 2ms
+PROCEDURAL   │ Pattern / goal match │ Executable steps      │ < 5ms
+SEMANTIC     │ Concept similarity   │ Structured facts      │ < 20ms
+EPISODIC     │ Context / time cue   │ Event sequences       │ < 50ms
+```
+
+---
+
+## 10.1 Working Memory Structure
+
+Working memory is not just "active state" — it's the **assembled context package** for the next reasoning step:
+
+```
+Working Memory
+├── Current task state        ← what am I doing right now
+├── Active tool set           ← which tools are loaded
+├── Relevant episodes         ← pulled from episodic, pre-loaded
+├── Active procedures         ← the runbook I'm currently executing
+├── Semantic context          ← concepts relevant to current task
+└── Attention weights         ← what matters most right now
+```
+
+Working memory becomes the **assembly layer** — AQL populates it from all five memory types:
+
+```aql
+PIPELINE prepare_context TIMEOUT 10ms
+  SCAN WORKING ALL
+  | RECALL EPISODIC WHERE task={current} LIMIT 3
+  | LOOKUP PROCEDURAL WHERE goal={current}
+  | RECALL SEMANTIC LIKE $current_context LIMIT 5
+  | LOAD TOOLS WHERE relevance > 0.8
+```
+
+---
+
+## 10.2 Tool Registry
+
+Tool Registry is a first-class memory type. It stores available tools, their schemas, rankings, and token costs.
+
+```aql
+-- Query available tools by task relevance
+LOOKUP TOOLS WHERE task_relevance > 0.8
+  ORDER BY ranking DESC
+  LIMIT 3
+  RETURN tool_id, schema, token_cost
+
+-- Load minimum tools into working memory
+LOAD TOOLS WHERE category = "file_operations"
+  THRESHOLD 0.7
+  LIMIT 5
+
+-- Store tool usage outcome for ranking updates
+STORE TOOLS (
+  tool_id    = "read_file",
+  success    = true,
+  latency_ms = 12,
+  task_id    = {current}
+)
+```
+
+### Tool Registry Schema
+
+```
+Tool Entry
+├── tool_id           ← unique identifier
+├── schema            ← JSON schema for parameters
+├── description       ← natural language description
+├── token_cost        ← estimated tokens for schema + typical response
+├── ranking           ← learned effectiveness score
+├── category          ← classification for filtering
+├── last_used         ← timestamp
+└── success_rate      ← historical success ratio
 ```
 
 ---
@@ -335,38 +408,50 @@ EPISODIC     │ Context / time cue   │ Event sequences    │ < 50ms
 ## 11. ADB Container Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│           Agent Container                   │
-│                                             │
-│  ┌──────────────────────────────────────┐   │
-│  │              ADB Process             │   │
-│  │                                      │   │
-│  │  ┌──────────┐    ┌────────────────┐  │   │
-│  │  │ Working  │    │   Episodic     │  │   │
-│  │  │ (HashMap)│    │ (Time-series   │  │   │
-│  │  └──────────┘    │  + Vector)     │  │   │
-│  │                  └────────────────┘  │   │
-│  │  ┌──────────┐    ┌────────────────┐  │   │
-│  │  │ Semantic │    │  Procedural    │  │   │
-│  │  │ (Vector  │    │  (Graph + KV)  │  │   │
-│  │  │  +Graph) │    └────────────────┘  │   │
-│  │  └──────────┘                        │   │
-│  │                                      │   │
-│  │         AQL Query Planner            │   │
-│  └──────────────┬───────────────────────┘   │
-│                 │ Unix socket / loopback     │
-│  ┌──────────────┴───────────────────────┐   │
-│  │           Agent Runtime              │   │
-│  │                                      │   │
-│  │   AQL query → assembled context      │   │
-│  │                    ↓                 │   │
-│  │                   LLM                │   │
-│  │                    ↓                 │   │
-│  │              decision/action         │   │
-│  │                    ↓                 │   │
-│  │           write-back to ADB          │   │
-│  └──────────────────────────────────────┘   │
-└─────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────┐
+│                  Agent Container                      │
+│                                                       │
+│  ┌─────────────────────────────────────────────────┐  │
+│  │                   ADB Process                   │  │
+│  │                                                 │  │
+│  │  ┌─────────────────────────────────────────┐    │  │
+│  │  │           Working Memory                │    │  │
+│  │  │         (Assembly Layer)                │    │  │
+│  │  │  ┌─────────┬─────────┬───────────────┐  │    │  │
+│  │  │  │ Task    │ Active  │ Attention     │  │    │  │
+│  │  │  │ State   │ Tools   │ Weights       │  │    │  │
+│  │  │  ├─────────┼─────────┼───────────────┤  │    │  │
+│  │  │  │ Loaded  │ Loaded  │ Loaded        │  │    │  │
+│  │  │  │Episodes │Concepts │ Procedures    │  │    │  │
+│  │  │  └─────────┴─────────┴───────────────┘  │    │  │
+│  │  └─────────────────────────────────────────┘    │  │
+│  │                                                 │  │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────────┐     │  │
+│  │  │ Episodic │ │ Semantic │ │  Procedural  │     │  │
+│  │  │(Time-srs │ │ (Vector  │ │  (Graph+KV)  │     │  │
+│  │  │ +Vector) │ │  +Graph) │ │              │     │  │
+│  │  └──────────┘ └──────────┘ └──────────────┘     │  │
+│  │                                                 │  │
+│  │  ┌──────────────────────────────────────────┐   │  │
+│  │  │              Tool Registry               │   │  │
+│  │  │  (Schemas + Rankings + Token Costs)      │   │  │
+│  │  └──────────────────────────────────────────┘   │  │
+│  │                                                 │  │
+│  │              AQL Query Planner                  │  │
+│  └───────────────────────┬─────────────────────────┘  │
+│                          │ Unix socket / loopback     │
+│  ┌───────────────────────┴─────────────────────────┐  │
+│  │                 Agent Runtime                   │  │
+│  │                                                 │  │
+│  │     AQL query → assembled context (Working)    │  │
+│  │                       ↓                        │  │
+│  │                      LLM                       │  │
+│  │                       ↓                        │  │
+│  │                 decision/action                │  │
+│  │                       ↓                        │  │
+│  │                write-back to ADB               │  │
+│  └─────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -391,8 +476,18 @@ EPISODIC     │ Context / time cue   │ Event sequences    │ < 50ms
 3. **Streaming RECALL** — should episodic recall support streaming results for long histories?
 4. **Conditional STORE** — should STORE support IF NOT EXISTS semantics?
 5. **Memory versioning** — does UPDATE need optimistic concurrency control?
+6. **Tool ranking updates** — should STORE TOOLS auto-update rankings, or require explicit UPDATE?
+7. **Tool eviction** — when working memory is full, which tools get evicted first?
 
 ---
 
-*AQL v0.1 — Working Specification*
+## 14. Resolved Questions (v0.2)
+
+1. **Working memory scope** — Working memory is the assembled context package, not just active state. It contains pre-loaded episodes, concepts, procedures, and active tools ready for the next reasoning step.
+
+2. **Tool selection** — Tool Registry is a first-class memory type. LOAD TOOLS selects and activates tools into working memory based on task relevance, rankings, and token budget.
+
+---
+
+*AQL v0.2 — Working Specification*
 *ADB / AQL Project — Sriram*
