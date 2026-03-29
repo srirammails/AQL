@@ -209,6 +209,7 @@ AQL is an open specification. Contributions to the grammar, use cases, and refer
 | Project | What it does | How ADB differs |
 |---------|-------------|-----------------|
 | Mem0 | Personal assistant memory | Single modality, no query language |
+| MemoryBear | Personal assistant memory, graph-based | 5 external services required, no query language, no cognitive taxonomy — ADB: one process, AQL, agent-native |
 | Zep | Conversation memory | Episodic only, no unified interface |
 | Chroma / Pinecone | Vector search | Semantic only, no cognitive taxonomy |
 | mnemory | MCP memory server | Facts about users, not agent operations |
