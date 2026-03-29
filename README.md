@@ -3,7 +3,7 @@
 **The unified in-memory memory layer every AI agent has been missing.**
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Spec](https://img.shields.io/badge/AQL%20spec-v0.2-teal.svg)](AQL_Grammar_Specification.md)
+[![Spec](https://img.shields.io/badge/AQL%20spec-v0.3-teal.svg)](spec/AQL_SPEC_v0.3.md)
 [![Status](https://img.shields.io/badge/status-specification%20%2B%20reference%20implementation-orange.svg)]()
 
 ---
@@ -91,7 +91,7 @@ UPDATE PROCEDURAL WHERE pattern_id="oom-kill-001" (
 
 **AQL's core design principle:** AQL retrieves and stores. It does not decide. The LLM owns what happens next.
 
-→ [Full AQL v0.2 Specification](AQL_Grammar_Specification.md)
+→ [Full AQL v0.3 Specification](spec/AQL_SPEC_v0.3.md)
 
 ## Key Design Decisions
 
