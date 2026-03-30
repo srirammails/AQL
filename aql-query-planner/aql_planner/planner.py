@@ -36,19 +36,37 @@ def extract_predicate(plan: ExecutionPlan) -> Optional[dict]:
         return None
 
     pred = plan.predicate
-    return {
-        "type": pred.pred_type.value if hasattr(pred, 'pred_type') else "unknown",
-        "conditions": [
-            {
+
+    # Build conditions list from singular condition or conditions list
+    conditions = []
+    if hasattr(pred, 'condition') and pred.condition:
+        c = pred.condition
+        conditions.append({
+            "field": c.field,
+            "op": c.op.value if hasattr(c.op, 'value') else str(c.op),
+            "value": c.value
+        })
+    elif hasattr(pred, 'conditions') and pred.conditions:
+        for c in pred.conditions:
+            conditions.append({
                 "field": c.field,
                 "op": c.op.value if hasattr(c.op, 'value') else str(c.op),
                 "value": c.value
-            }
-            for c in (pred.conditions if hasattr(pred, 'conditions') else [])
-        ] if hasattr(pred, 'conditions') else [],
-        "pattern": pred.pattern if hasattr(pred, 'pattern') else None,
-        "key_field": pred.key_field if hasattr(pred, 'key_field') else None,
-        "key_value": pred.key_value if hasattr(pred, 'key_value') else None,
+            })
+
+    # Extract key expression if present
+    key_field = None
+    key_value = None
+    if hasattr(pred, 'key_expr') and pred.key_expr:
+        key_field = pred.key_expr.field
+        key_value = pred.key_expr.value
+
+    return {
+        "type": pred.type if hasattr(pred, 'type') else "unknown",
+        "conditions": conditions,
+        "pattern": pred.expression if hasattr(pred, 'expression') else None,
+        "key_field": key_field,
+        "key_value": key_value,
     }
 
 

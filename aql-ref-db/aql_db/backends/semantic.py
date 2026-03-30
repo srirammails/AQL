@@ -91,6 +91,10 @@ class SemanticBackend(BaseBackend):
         """
         search_text = predicate.get("expression") or predicate.get("pattern")
 
+        # Handle embedding_ref dict from parser (e.g., {'type': 'embedding_ref', 'name': 'ctx'})
+        if isinstance(search_text, dict):
+            search_text = search_text.get("name", "")
+
         if not search_text:
             return self.lookup(predicate, modifiers)
 

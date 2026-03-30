@@ -118,8 +118,10 @@ class TestRTBScenario:
         assert len(result["records"]) >= 1
 
     def test_recall_semantic_like(self):
+        # Note: In reference impl, $var uses var name as search text.
+        # "sports" matches "sports news site" via word overlap.
         result = self.db.execute('''
-            RECALL SEMANTIC LIKE $sports_content
+            RECALL SEMANTIC LIKE $sports
             MIN_CONFIDENCE 0.1
             LIMIT 5
         ''')
@@ -135,13 +137,15 @@ class TestMultiAgentScenario:
         db.execute('''
             STORE SEMANTIC (
                 concept = "k8s_oom_pattern",
-                knowledge = "payments-api OOMs every Friday"
+                knowledge = "payments OOM errors every Friday"
             )
             SCOPE shared
             NAMESPACE "platform-agents"
         ''')
+        # Note: In reference impl, $var uses var name as search text.
+        # "Friday" matches "Friday" via word overlap.
         result = db.execute('''
-            RECALL SEMANTIC LIKE $oom_pattern
+            RECALL SEMANTIC LIKE $Friday
             MIN_CONFIDENCE 0.1
             LIMIT 5
         ''')

@@ -125,6 +125,10 @@ class ProceduralBackend(BaseBackend):
         pattern_text = predicate.get("pattern") or predicate.get("expression")
         threshold = modifiers.get("threshold", 0.5) if modifiers else 0.5
 
+        # Handle embedding_ref dict from parser (e.g., {'type': 'embedding_ref', 'name': 'ctx'})
+        if isinstance(pattern_text, dict):
+            pattern_text = pattern_text.get("name", "")
+
         if not pattern_text:
             return self.lookup(predicate, modifiers)
 
