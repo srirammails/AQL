@@ -1,0 +1,168 @@
+// grammar/aql.lark
+// AQL v0.4 Grammar — Lark Parser
+// Source: github.com/srirammails/AQL/blob/main/spec/AQL_SPEC_v0.4.md
+
+// ── Top Level ──────────────────────────────────────────────────────────────
+program    : statement+
+statement  : pipeline_stmt
+           | reflect_stmt
+           | forget_stmt
+           | write_stmt
+           | read_stmt
+
+// ── Read Statements ────────────────────────────────────────────────────────
+read_stmt  : verb memory_type? predicate modifier*
+
+verb       : "LOOKUP"i -> lookup_verb
+           | "RECALL"i -> recall_verb
+           | "SCAN"i   -> scan_verb
+           | "LOAD"i   -> load_verb
+
+memory_type : "EPISODIC"i   -> episodic_type
+            | "SEMANTIC"i   -> semantic_type
+            | "PROCEDURAL"i -> procedural_type
+            | "WORKING"i    -> working_type
+            | "TOOLS"i      -> tools_type
+
+predicate  : exact_pred
+           | similarity_pred
+           | scan_pred
+
+exact_pred      : "KEY"i key_expr     -> key_pred
+                | "WHERE"i condition  -> where_pred
+
+key_expr        : identifier "=" value
+
+similarity_pred : "LIKE"i expression    -> like_pred
+                | "PATTERN"i expression -> pattern_pred
+
+scan_pred       : "ALL"i              -> all_pred
+                | "WHERE"i condition  -> where_pred
+
+?condition : or_condition
+
+or_condition  : and_condition ("OR"i and_condition)*
+and_condition : atom_condition ("AND"i atom_condition)*
+atom_condition : "(" condition ")"  -> paren_cond
+               | field comparator value -> simple_cond
+
+comparator : ">=" -> gte_op
+           | "<=" -> lte_op
+           | "!=" -> neq_op
+           | "="  -> eq_op
+           | ">"  -> gt_op
+           | "<"  -> lt_op
+
+// ── Write Statements ───────────────────────────────────────────────────────
+write_stmt  : store_stmt
+            | update_stmt
+            | link_stmt
+
+store_stmt  : "STORE"i memory_type payload scope_mod? namespace_mod? ttl_mod?
+
+update_stmt : "UPDATE"i memory_type "WHERE"i condition payload
+
+link_stmt   : "LINK"i memory_type key_expr "TO"i memory_type key_expr
+
+payload     : "(" field_value_list ")"
+
+field_value_list : field_value ("," field_value)*
+field_value      : field "=" value
+
+// ── Forget Statement ───────────────────────────────────────────────────────
+forget_stmt : "FORGET"i memory_type predicate
+
+// ── Modifiers ──────────────────────────────────────────────────────────────
+modifier    : return_mod
+            | limit_mod
+            | weight_mod
+            | threshold_mod
+            | timeout_mod
+            | order_mod
+            | confidence_mod
+            | source_mod
+
+return_mod     : "RETURN"i field_list
+field_list     : field ("," field)*
+
+limit_mod      : "LIMIT"i INT
+
+weight_mod     : "WEIGHT"i field
+
+threshold_mod  : "THRESHOLD"i DECIMAL
+
+timeout_mod    : "TIMEOUT"i duration
+
+order_mod      : "ORDER"i "BY"i field sort_dir?
+sort_dir       : "ASC"i  -> asc_dir
+               | "DESC"i -> desc_dir
+
+confidence_mod : "MIN_CONFIDENCE"i DECIMAL
+
+source_mod     : "FROM"i identifier_list
+identifier_list : identifier ("," identifier)*
+
+// Write-specific modifiers
+scope_mod     : "SCOPE"i scope_value
+scope_value   : "private"i -> private_scope
+              | "shared"i  -> shared_scope
+              | "cluster"i -> cluster_scope
+
+namespace_mod : "NAMESPACE"i ESCAPED_STRING
+
+ttl_mod       : "TTL"i duration
+
+duration      : INT time_unit
+time_unit     : "ms" -> ms_unit
+              | "s"  -> s_unit
+              | "m"  -> m_unit
+              | "h"  -> h_unit
+              | "d"  -> d_unit
+
+// ── Reflect Statement ──────────────────────────────────────────────────────
+reflect_stmt  : "REFLECT"i context_expr reflect_source+ modifier* then_clause?
+
+context_expr  : key_expr
+              | identifier
+
+reflect_source : "INCLUDE"i memory_type predicate?
+
+then_clause   : "THEN"i write_stmt
+
+// ── Pipeline Statement ─────────────────────────────────────────────────────
+pipeline_stmt : "PIPELINE"i identifier? "TIMEOUT"i duration pipeline_stage+
+
+pipeline_stage : stage_stmt "|"?
+stage_stmt     : read_stmt
+               | reflect_stmt
+
+// ── Primitives ─────────────────────────────────────────────────────────────
+field      : identifier ("." identifier)?
+expression : embedding_ref
+           | variable
+           | ESCAPED_STRING
+
+value      : ESCAPED_STRING  -> str_val
+           | DECIMAL         -> decimal_val
+           | INT             -> int_val
+           | boolean         -> bool_val
+           | embedding_ref   -> embed_val
+           | variable        -> var_val
+
+boolean    : "true"i  -> true_val
+           | "false"i -> false_val
+
+embedding_ref : "$" identifier
+variable      : "{" identifier "}"
+
+identifier : CNAME
+
+// ── Terminals ──────────────────────────────────────────────────────────────
+DECIMAL : /\d+\.\d+/
+INT     : /\d+/
+
+%import common.CNAME
+%import common.ESCAPED_STRING
+%import common.WS
+%ignore WS
+%ignore /--[^\n]*/
