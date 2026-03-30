@@ -80,6 +80,10 @@ class TaskExecutor:
 
         elif task.task_type == TaskType.SCAN:
             records = backend.scan()
+            # Filter by predicate if provided (SCAN WHERE ...)
+            if task.predicate and task.predicate.get("conditions"):
+                records = self._filter_records(records, task.predicate)
+            records = backend._apply_modifiers(records, task.modifiers)
             return {
                 "memory_type": "WORKING",
                 "records": records,
@@ -168,3 +172,53 @@ class TaskExecutor:
             "graph": "GRAPH",
         }
         return mapping.get(backend, backend.upper())
+
+    def _filter_records(
+        self,
+        records: List[Dict[str, Any]],
+        predicate: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Filter records by predicate conditions."""
+        conditions = predicate.get("conditions", [])
+        if not conditions:
+            return records
+
+        filtered = []
+        for record in records:
+            match = True
+            for cond in conditions:
+                field = cond.get("field")
+                op = cond.get("op")
+                value = cond.get("value")
+
+                record_value = record.get("data", {}).get(field)
+
+                if op in ("=", "EQ"):
+                    if record_value != value:
+                        match = False
+                        break
+                elif op in ("!=", "NEQ"):
+                    if record_value == value:
+                        match = False
+                        break
+                elif op in (">", "GT"):
+                    if not (record_value and record_value > value):
+                        match = False
+                        break
+                elif op in ("<", "LT"):
+                    if not (record_value and record_value < value):
+                        match = False
+                        break
+                elif op in (">=", "GTE"):
+                    if not (record_value and record_value >= value):
+                        match = False
+                        break
+                elif op in ("<=", "LTE"):
+                    if not (record_value and record_value <= value):
+                        match = False
+                        break
+
+            if match:
+                filtered.append(record)
+
+        return filtered
