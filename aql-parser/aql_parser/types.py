@@ -1,5 +1,5 @@
 # aql_parser/types.py
-"""AQL v0.4 Type Definitions"""
+"""AQL v0.5 Type Definitions"""
 
 from __future__ import annotations
 from dataclasses import dataclass, field
@@ -44,6 +44,21 @@ class ScopeValue(str, Enum):
     CLUSTER = "cluster"
 
 
+class AggOp(str, Enum):
+    COUNT = "COUNT"
+    AVG = "AVG"
+    SUM = "SUM"
+    MIN = "MIN"
+    MAX = "MAX"
+
+
+class WindowType(str, Enum):
+    LAST_N = "LAST_N"
+    LAST_DUR = "LAST_DUR"
+    TOP = "TOP"
+    SINCE = "SINCE"
+
+
 @dataclass
 class Condition:
     """Represents a WHERE condition."""
@@ -65,11 +80,12 @@ class KeyExpr:
 
 @dataclass
 class Predicate:
-    """Represents a query predicate (KEY, WHERE, LIKE, PATTERN, ALL)."""
-    type: str  # "key" | "where" | "like" | "pattern" | "all"
+    """Represents a query predicate (KEY, WHERE, LIKE, PATTERN, ALL, WINDOW)."""
+    type: str  # "key" | "where" | "like" | "pattern" | "all" | "window"
     key_expr: Optional[KeyExpr] = None
     condition: Optional[Condition] = None
     expression: Optional[Any] = None  # for LIKE / PATTERN
+    window: Optional['WindowMod'] = None  # for WINDOW
 
 
 @dataclass
@@ -139,6 +155,37 @@ class TtlMod:
     """TTL 90d"""
     value: int
     unit: str
+
+
+@dataclass
+class WindowMod:
+    """WINDOW LAST 10 | LAST 30s | TOP 3 BY field | SINCE key_expr"""
+    window_type: WindowType
+    count: Optional[int] = None       # for LAST N or TOP N
+    duration_value: Optional[int] = None  # for LAST duration
+    duration_unit: Optional[str] = None   # ms/s/m/h/d
+    field: Optional[str] = None       # for TOP N BY field
+    key_expr: Optional['KeyExpr'] = None  # for SINCE key_expr
+
+
+@dataclass
+class AggregateFunc:
+    """COUNT(*) AS total or AVG(field) AS avg_value"""
+    op: AggOp
+    field: Optional[str]  # None for COUNT(*)
+    alias: str
+
+
+@dataclass
+class AggregateMod:
+    """AGGREGATE COUNT(*) AS total, AVG(price) AS avg_price"""
+    functions: List[AggregateFunc]
+
+
+@dataclass
+class HavingMod:
+    """HAVING count > 5"""
+    condition: 'Condition'
 
 
 @dataclass

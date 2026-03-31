@@ -1,6 +1,6 @@
 # aql_parser/__init__.py
 """
-AQL Parser — Agent Query Language v0.4
+AQL Parser — Agent Query Language v0.5
 
 A parser for AQL, the query language for ADB (Agent Database).
 
@@ -19,6 +19,8 @@ from .types import (
     MemoryType,
     Comparator,
     ScopeValue,
+    AggOp,
+    WindowType,
     Predicate,
     Payload,
     ReflectSource,
@@ -33,12 +35,16 @@ from .types import (
     ScopeMod,
     NamespaceMod,
     TtlMod,
+    WindowMod,
+    AggregateFunc,
+    AggregateMod,
+    HavingMod,
     KeyExpr,
     Condition,
 )
 from .errors import AqlError
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "parse",
     "ExecutionPlan",
@@ -46,6 +52,8 @@ __all__ = [
     "MemoryType",
     "Comparator",
     "ScopeValue",
+    "AggOp",
+    "WindowType",
     "Predicate",
     "Payload",
     "ReflectSource",
@@ -60,6 +68,10 @@ __all__ = [
     "ScopeMod",
     "NamespaceMod",
     "TtlMod",
+    "WindowMod",
+    "AggregateFunc",
+    "AggregateMod",
+    "HavingMod",
     "KeyExpr",
     "Condition",
     "AqlError",

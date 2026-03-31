@@ -6,7 +6,8 @@ from typing import Any, Optional
 from aql_parser import (
     ExecutionPlan, Verb, MemoryType,
     LimitMod, OrderMod, ThresholdMod, ConfidenceMod,
-    ReturnMod, SourceMod, WeightMod, ScopeMod, NamespaceMod
+    ReturnMod, SourceMod, WeightMod, ScopeMod, NamespaceMod,
+    AggregateMod, HavingMod, WindowMod
 )
 
 from .task import Task, TaskList, TaskType
@@ -61,12 +62,29 @@ def extract_predicate(plan: ExecutionPlan) -> Optional[dict]:
         key_field = pred.key_expr.field
         key_value = pred.key_expr.value
 
+    # Extract window info if present
+    window = None
+    if hasattr(pred, 'window') and pred.window:
+        w = pred.window
+        window = {
+            "window_type": w.window_type.value if hasattr(w.window_type, 'value') else str(w.window_type),
+            "count": w.count,
+            "duration_value": w.duration_value,
+            "duration_unit": w.duration_unit,
+            "field": w.field,
+            "key_expr": {
+                "field": w.key_expr.field,
+                "value": w.key_expr.value
+            } if w.key_expr else None,
+        }
+
     return {
         "type": pred.type if hasattr(pred, 'type') else "unknown",
         "conditions": conditions,
         "pattern": pred.expression if hasattr(pred, 'expression') else None,
         "key_field": key_field,
         "key_value": key_value,
+        "window": window,
     }
 
 
@@ -102,6 +120,28 @@ def extract_modifiers(plan: ExecutionPlan) -> dict:
     weight = plan.get_modifier(WeightMod)
     if weight:
         mods["weight_field"] = weight.field
+
+    # AGGREGATE modifier (v0.5)
+    aggregate = plan.get_modifier(AggregateMod)
+    if aggregate:
+        mods["aggregate"] = [
+            {
+                "op": f.op.value if hasattr(f.op, 'value') else str(f.op),
+                "field": f.field,
+                "alias": f.alias,
+            }
+            for f in aggregate.functions
+        ]
+
+    # HAVING modifier (v0.5)
+    having = plan.get_modifier(HavingMod)
+    if having:
+        c = having.condition
+        mods["having"] = {
+            "field": c.field,
+            "op": c.op.value if hasattr(c.op, 'value') else str(c.op),
+            "value": c.value,
+        }
 
     return mods
 

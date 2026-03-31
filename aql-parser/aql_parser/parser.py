@@ -1,16 +1,17 @@
 # aql_parser/parser.py
-"""AQL v0.4 Parser using Lark"""
+"""AQL v0.5 Parser using Lark"""
 
 from pathlib import Path
 from lark import Lark, Transformer, v_args
 from lark.exceptions import UnexpectedInput, UnexpectedEOF
 
 from .types import (
-    Verb, MemoryType, Comparator, ScopeValue,
+    Verb, MemoryType, Comparator, ScopeValue, AggOp, WindowType,
     Condition, KeyExpr, Predicate, Payload,
     ReturnMod, LimitMod, WeightMod, ThresholdMod,
     TimeoutMod, OrderMod, ConfidenceMod, SourceMod,
     ScopeMod, NamespaceMod, TtlMod,
+    WindowMod, AggregateFunc, AggregateMod, HavingMod,
     ReflectSource, ExecutionPlan
 )
 from .errors import AqlError
@@ -188,6 +189,35 @@ class AqlTransformer(Transformer):
     def scan_pred(self, items):
         return items[0]
 
+    # ── Window Predicates ─────────────────────────────────────────────────
+    def window_last_n(self, items):
+        return WindowMod(window_type=WindowType.LAST_N, count=items[0])
+
+    def window_last_dur(self, items):
+        dur = items[0]  # TimeoutMod from duration
+        return WindowMod(
+            window_type=WindowType.LAST_DUR,
+            duration_value=dur.value,
+            duration_unit=dur.unit
+        )
+
+    def window_top(self, items):
+        return WindowMod(
+            window_type=WindowType.TOP,
+            count=items[0],
+            field=items[1]
+        )
+
+    def window_since(self, items):
+        return WindowMod(window_type=WindowType.SINCE, key_expr=items[0])
+
+    def window_type(self, items):
+        return items[0]
+
+    def window_pred(self, items):
+        window_mod = items[0]
+        return Predicate(type="window", window=window_mod)
+
     def predicate(self, items):
         return items[0]
 
@@ -267,6 +297,40 @@ class AqlTransformer(Transformer):
 
     def source_mod(self, items):
         return SourceMod(sources=items[0])
+
+    # ── Aggregate Modifiers ───────────────────────────────────────────────
+    def count_op(self, items):
+        return AggOp.COUNT
+
+    def avg_op(self, items):
+        return AggOp.AVG
+
+    def sum_op(self, items):
+        return AggOp.SUM
+
+    def min_op(self, items):
+        return AggOp.MIN
+
+    def max_op(self, items):
+        return AggOp.MAX
+
+    def agg_op(self, items):
+        return items[0]
+
+    def agg_field_func(self, items):
+        return AggregateFunc(op=items[0], field=items[1], alias=items[2])
+
+    def agg_count_star(self, items):
+        return AggregateFunc(op=AggOp.COUNT, field=None, alias=items[0])
+
+    def aggregate_func(self, items):
+        return items[0]
+
+    def aggregate_mod(self, items):
+        return AggregateMod(functions=list(items))
+
+    def having_mod(self, items):
+        return HavingMod(condition=items[0])
 
     def modifier(self, items):
         return items[0]

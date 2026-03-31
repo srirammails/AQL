@@ -1,6 +1,6 @@
 // grammar/aql.lark
-// AQL v0.4 Grammar — Lark Parser
-// Source: github.com/srirammails/AQL/blob/main/spec/AQL_SPEC_v0.4.md
+// AQL v0.5 Grammar — Lark Parser
+// Source: github.com/srirammails/AQL/blob/main/spec/AQL_SPEC_v0.5.md
 
 // ── Top Level ──────────────────────────────────────────────────────────────
 program    : statement+
@@ -38,6 +38,14 @@ similarity_pred : "LIKE"i expression    -> like_pred
 
 scan_pred       : "ALL"i              -> all_pred
                 | "WHERE"i condition  -> where_pred
+                | window_pred
+
+window_pred     : "WINDOW"i window_type
+
+window_type     : "LAST"i INT         -> window_last_n
+                | "LAST"i duration    -> window_last_dur
+                | "TOP"i INT "BY"i field -> window_top
+                | "SINCE"i key_expr   -> window_since
 
 ?condition : or_condition
 
@@ -81,6 +89,21 @@ modifier    : return_mod
             | order_mod
             | confidence_mod
             | source_mod
+            | aggregate_mod
+            | having_mod
+
+aggregate_mod  : "AGGREGATE"i aggregate_func ("," aggregate_func)*
+
+aggregate_func : agg_op "(" field ")" "AS"i identifier -> agg_field_func
+               | "COUNT"i "(" "*" ")" "AS"i identifier -> agg_count_star
+
+agg_op         : "COUNT"i -> count_op
+               | "AVG"i   -> avg_op
+               | "SUM"i   -> sum_op
+               | "MIN"i   -> min_op
+               | "MAX"i   -> max_op
+
+having_mod     : "HAVING"i condition
 
 return_mod     : "RETURN"i field_list
 field_list     : field ("," field)*
