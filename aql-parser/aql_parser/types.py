@@ -134,8 +134,21 @@ class ConfidenceMod:
 
 @dataclass
 class SourceMod:
-    """FROM source1, source2"""
+    """SOURCE source1, source2"""
     sources: List[str]
+
+
+@dataclass
+class WithLinksMod:
+    """WITH LINKS ALL | TYPE "applied_to" """
+    target: str  # "ALL" or the type string
+    is_all: bool = False
+
+
+@dataclass
+class FollowMod:
+    """FOLLOW LINKS TYPE "triggers" """
+    link_type: str
 
 
 @dataclass
@@ -196,9 +209,10 @@ class Payload:
 
 @dataclass
 class ReflectSource:
-    """INCLUDE memory_type predicate?"""
+    """FROM memory_type predicate? (used in REFLECT)"""
     memory_type: MemoryType
     predicate: Optional[Predicate] = None
+    is_all: bool = False  # True for REFLECT FROM ALL
 
 
 @dataclass
@@ -220,10 +234,14 @@ class ExecutionPlan:
     timeout: Optional[TimeoutMod] = None
     stages: List[ExecutionPlan] = field(default_factory=list)
 
-    # LINK specific
-    link_from: Optional[KeyExpr] = None
+    # LINK specific (v0.5)
+    # LINK FROM memory_type WHERE condition TO memory_type WHERE condition TYPE? WEIGHT?
+    link_from_type: Optional[MemoryType] = None
+    link_from_predicate: Optional[Condition] = None
     link_to_type: Optional[MemoryType] = None
-    link_to: Optional[KeyExpr] = None
+    link_to_predicate: Optional[Condition] = None
+    link_type: Optional[str] = None   # TYPE "applied_to"
+    link_weight: Optional[float] = None  # WEIGHT 0.97
 
     # Multi-agent
     scope: Optional[ScopeMod] = None

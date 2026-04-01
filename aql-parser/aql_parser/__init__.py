@@ -39,6 +39,8 @@ from .types import (
     AggregateFunc,
     AggregateMod,
     HavingMod,
+    WithLinksMod,
+    FollowMod,
     KeyExpr,
     Condition,
 )
@@ -72,6 +74,8 @@ __all__ = [
     "AggregateFunc",
     "AggregateMod",
     "HavingMod",
+    "WithLinksMod",
+    "FollowMod",
     "KeyExpr",
     "Condition",
     "AqlError",

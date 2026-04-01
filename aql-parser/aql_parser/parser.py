@@ -12,6 +12,7 @@ from .types import (
     TimeoutMod, OrderMod, ConfidenceMod, SourceMod,
     ScopeMod, NamespaceMod, TtlMod,
     WindowMod, AggregateFunc, AggregateMod, HavingMod,
+    WithLinksMod, FollowMod,
     ReflectSource, ExecutionPlan
 )
 from .errors import AqlError
@@ -240,6 +241,13 @@ class AqlTransformer(Transformer):
     def memory_type(self, items):
         return items[0]
 
+    # v0.5: memory_target can be memory_type or ALL
+    def all_target(self, items):
+        return "ALL"  # Special string marker for ALL
+
+    def memory_target(self, items):
+        return items[0]  # Either MemoryType or "ALL"
+
     # ── Verbs ───────────────────────────────────────────────────────────
     def lookup_verb(self, items):
         return Verb.LOOKUP
@@ -332,6 +340,22 @@ class AqlTransformer(Transformer):
     def having_mod(self, items):
         return HavingMod(condition=items[0])
 
+    # ── WITH LINKS / FOLLOW LINKS Modifiers ─────────────────────────────
+    def links_all(self, items):
+        return WithLinksMod(target="ALL", is_all=True)
+
+    def links_type(self, items):
+        return WithLinksMod(target=items[0], is_all=False)
+
+    def links_target(self, items):
+        return items[0]
+
+    def with_links_mod(self, items):
+        return items[0]  # Already WithLinksMod from links_target
+
+    def follow_mod(self, items):
+        return FollowMod(link_type=items[0])
+
     def modifier(self, items):
         return items[0]
 
@@ -398,63 +422,114 @@ class AqlTransformer(Transformer):
             payload=items[2],
         )
 
+    # v0.5: LINK FROM memory_type WHERE condition TO memory_type WHERE condition TYPE? WEIGHT?
+    def link_type_mod(self, items):
+        return ("type", items[0])  # Tuple marker for TYPE
+
+    def link_weight_mod(self, items):
+        return ("weight", items[0])  # Tuple marker for WEIGHT
+
     def link_stmt(self, items):
+        it = iter(items)
+        from_type = next(it)
+        from_condition = next(it)
+        to_type = next(it)
+        to_condition = next(it)
+
+        link_type = None
+        link_weight = None
+        for item in it:
+            if isinstance(item, tuple):
+                if item[0] == "type":
+                    link_type = item[1]
+                elif item[0] == "weight":
+                    link_weight = item[1]
+
         return ExecutionPlan(
             verb=Verb.LINK,
-            memory_type=items[0],
-            link_from=items[1],
-            link_to_type=items[2],
-            link_to=items[3],
+            link_from_type=from_type,
+            link_from_predicate=from_condition,
+            link_to_type=to_type,
+            link_to_predicate=to_condition,
+            link_type=link_type,
+            link_weight=link_weight,
         )
 
     def write_stmt(self, items):
         return items[0]
 
     # ── Read Statements ─────────────────────────────────────────────────
+    # v0.5: verb "FROM" memory_target predicate modifier*
     def read_stmt(self, items):
         it = iter(items)
         verb = next(it)
-        memory_type = None
-        predicate = None
-        modifiers = []
-        for item in it:
-            if isinstance(item, MemoryType):
-                memory_type = item
-            elif isinstance(item, Predicate):
-                predicate = item
-            else:
-                modifiers.append(item)
-        return ExecutionPlan(
+        memory_target = next(it)  # MemoryType or "ALL"
+        predicate = next(it)
+        modifiers = list(it)
+
+        # Handle ALL as special marker - store in memory_type as None
+        memory_type = memory_target if isinstance(memory_target, MemoryType) else None
+        is_all = memory_target == "ALL"
+
+        plan = ExecutionPlan(
             verb=verb,
             memory_type=memory_type,
             predicate=predicate,
             modifiers=modifiers,
         )
+        # Mark if this is a FROM ALL query
+        if is_all:
+            plan.memory_type = None  # None indicates ALL
+        return plan
 
     # ── Forget Statement ────────────────────────────────────────────────
+    # v0.5: FORGET FROM memory_target predicate
     def forget_stmt(self, items):
+        memory_target = items[0]  # MemoryType or "ALL"
+        predicate = items[1]
+
+        memory_type = memory_target if isinstance(memory_target, MemoryType) else None
+
         return ExecutionPlan(
             verb=Verb.FORGET,
-            memory_type=items[0],
-            predicate=items[1],
+            memory_type=memory_type,
+            predicate=predicate,
         )
 
     # ── Reflect Statement ───────────────────────────────────────────────
-    def context_expr(self, items):
-        return items[0]
+    # v0.5: REFLECT reflect_sources modifier* then_clause?
+    # reflect_sources = FROM memory_type predicate, ... OR FROM ALL predicate
 
     def reflect_source(self, items):
+        """FROM memory_type predicate?"""
         memory_type = items[0]
         predicate = items[1] if len(items) > 1 else None
-        return ReflectSource(memory_type=memory_type, predicate=predicate)
+        return ReflectSource(memory_type=memory_type, predicate=predicate, is_all=False)
+
+    def reflect_from_all(self, items):
+        """FROM ALL predicate?"""
+        predicate = items[0] if items else None
+        # Use a special marker for ALL - pick WORKING as placeholder
+        return ReflectSource(memory_type=MemoryType.WORKING, predicate=predicate, is_all=True)
+
+    def reflect_sources(self, items):
+        """Wrapper for list of reflect_source"""
+        return list(items)
 
     def then_clause(self, items):
         return items[0]
 
     def reflect_stmt(self, items):
         it = iter(items)
-        context_expr = next(it)
+        first = next(it)
+
+        # First item is either a list of ReflectSource or a single ReflectSource (from reflect_from_all)
         sources = []
+        if isinstance(first, list):
+            sources = first
+        elif isinstance(first, ReflectSource):
+            sources = [first]
+
         modifiers = []
         then_stmt = None
         for item in it:
@@ -464,9 +539,9 @@ class AqlTransformer(Transformer):
                 then_stmt = item
             else:
                 modifiers.append(item)
+
         return ExecutionPlan(
             verb=Verb.REFLECT,
-            context_expr=context_expr,
             sources=sources,
             modifiers=modifiers,
             then_stmt=then_stmt,

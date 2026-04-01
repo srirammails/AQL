@@ -1,5 +1,5 @@
 # tests/test_planner.py
-"""Tests for the query planner."""
+"""Tests for the query planner (v0.5 syntax with FROM/INTO)."""
 
 import pytest
 from aql_parser import parse
@@ -8,42 +8,42 @@ from aql_planner import plan, TaskType
 
 class TestPlanSimple:
     def test_simple_lookup_produces_one_task(self):
-        execution_plan = parse('LOOKUP SEMANTIC KEY concept = "test"')
+        execution_plan = parse('LOOKUP FROM SEMANTIC KEY concept = "test"')
         task_list = plan(execution_plan)
         assert len(task_list.tasks) == 1
         assert task_list.tasks[0].backend == "semantic"
         assert task_list.tasks[0].task_type == TaskType.LOOKUP
 
     def test_recall_episodic_routes_correctly(self):
-        execution_plan = parse('RECALL EPISODIC WHERE pod = "x" LIMIT 5')
+        execution_plan = parse('RECALL FROM EPISODIC WHERE pod = "x" LIMIT 5')
         task_list = plan(execution_plan)
         assert len(task_list.tasks) == 1
         assert task_list.tasks[0].backend == "episodic"
         assert task_list.tasks[0].task_type == TaskType.RECALL
 
     def test_scan_working_routes_correctly(self):
-        execution_plan = parse('SCAN WORKING ALL')
+        execution_plan = parse('SCAN FROM WORKING ALL')
         task_list = plan(execution_plan)
         assert len(task_list.tasks) == 1
         assert task_list.tasks[0].backend == "working"
         assert task_list.tasks[0].task_type == TaskType.SCAN
 
     def test_load_tools_routes_correctly(self):
-        execution_plan = parse('LOAD TOOLS WHERE relevance > 0.8 LIMIT 3')
+        execution_plan = parse('LOAD FROM TOOLS WHERE relevance > 0.8 LIMIT 3')
         task_list = plan(execution_plan)
         assert len(task_list.tasks) == 1
         assert task_list.tasks[0].backend == "tools"
         assert task_list.tasks[0].task_type == TaskType.LOAD
 
     def test_store_working_routes_correctly(self):
-        execution_plan = parse('STORE WORKING (task_id = "t1")')
+        execution_plan = parse('STORE INTO WORKING (task_id = "t1")')
         task_list = plan(execution_plan)
         assert len(task_list.tasks) == 1
         assert task_list.tasks[0].backend == "working"
         assert task_list.tasks[0].task_type == TaskType.STORE
 
     def test_forget_episodic_routes_correctly(self):
-        execution_plan = parse('FORGET EPISODIC WHERE last_accessed > 30')
+        execution_plan = parse('FORGET FROM EPISODIC WHERE last_accessed > 30')
         task_list = plan(execution_plan)
         assert len(task_list.tasks) == 1
         assert task_list.tasks[0].backend == "episodic"
@@ -52,42 +52,42 @@ class TestPlanSimple:
 
 class TestPlanModifiers:
     def test_limit_modifier_extracted(self):
-        execution_plan = parse('RECALL EPISODIC WHERE x = "y" LIMIT 10')
+        execution_plan = parse('RECALL FROM EPISODIC WHERE x = "y" LIMIT 10')
         task_list = plan(execution_plan)
         assert task_list.tasks[0].modifiers.get("limit") == 10
 
     def test_order_modifier_extracted(self):
-        execution_plan = parse('RECALL EPISODIC WHERE x = "y" ORDER BY time DESC')
+        execution_plan = parse('RECALL FROM EPISODIC WHERE x = "y" ORDER BY time DESC')
         task_list = plan(execution_plan)
         assert task_list.tasks[0].modifiers.get("order_by") == "time"
         assert task_list.tasks[0].modifiers.get("order_dir") == "DESC"
 
     def test_threshold_modifier_extracted(self):
-        execution_plan = parse('LOOKUP PROCEDURAL PATTERN $x THRESHOLD 0.85')
+        execution_plan = parse('LOOKUP FROM PROCEDURAL PATTERN $x THRESHOLD 0.85')
         task_list = plan(execution_plan)
         assert task_list.tasks[0].modifiers.get("threshold") == pytest.approx(0.85)
 
     def test_confidence_modifier_extracted(self):
-        execution_plan = parse('RECALL SEMANTIC LIKE $ctx MIN_CONFIDENCE 0.7')
+        execution_plan = parse('RECALL FROM SEMANTIC LIKE $ctx MIN_CONFIDENCE 0.7')
         task_list = plan(execution_plan)
         assert task_list.tasks[0].modifiers.get("min_confidence") == pytest.approx(0.7)
 
 
 class TestPlanScope:
     def test_scope_extracted(self):
-        execution_plan = parse('STORE SEMANTIC (concept = "x") SCOPE shared')
+        execution_plan = parse('STORE INTO SEMANTIC (concept = "x") SCOPE shared')
         task_list = plan(execution_plan)
         assert task_list.tasks[0].scope == "shared"
 
     def test_namespace_extracted(self):
         execution_plan = parse(
-            'STORE SEMANTIC (concept = "x") SCOPE shared NAMESPACE "my-agent"'
+            'STORE INTO SEMANTIC (concept = "x") SCOPE shared NAMESPACE "my-agent"'
         )
         task_list = plan(execution_plan)
         assert task_list.tasks[0].namespace == "my-agent"
 
     def test_default_scope_is_private(self):
-        execution_plan = parse('STORE WORKING (x = "y")')
+        execution_plan = parse('STORE INTO WORKING (x = "y")')
         task_list = plan(execution_plan)
         assert task_list.tasks[0].scope == "private"
 
@@ -96,8 +96,8 @@ class TestPlanPipeline:
     def test_pipeline_produces_ordered_tasks(self):
         execution_plan = parse('''
             PIPELINE test TIMEOUT 100ms
-            SCAN WORKING ALL
-            | RECALL EPISODIC WHERE x = "y" LIMIT 5
+            SCAN FROM WORKING ALL
+            | RECALL FROM EPISODIC WHERE x = "y" LIMIT 5
         ''')
         task_list = plan(execution_plan)
         assert len(task_list.tasks) == 2
@@ -106,9 +106,9 @@ class TestPlanPipeline:
     def test_pipeline_tasks_have_correct_dependencies(self):
         execution_plan = parse('''
             PIPELINE test TIMEOUT 100ms
-            SCAN WORKING ALL
-            | LOOKUP SEMANTIC KEY concept = "x"
-            | RECALL EPISODIC WHERE pod = "y" LIMIT 5
+            SCAN FROM WORKING ALL
+            | LOOKUP FROM SEMANTIC KEY concept = "x"
+            | RECALL FROM EPISODIC WHERE pod = "y" LIMIT 5
         ''')
         task_list = plan(execution_plan)
         assert len(task_list.tasks) == 3
@@ -125,8 +125,8 @@ class TestPlanPipeline:
     def test_pipeline_budget_allocated(self):
         execution_plan = parse('''
             PIPELINE test TIMEOUT 80ms
-            SCAN WORKING ALL
-            | RECALL EPISODIC WHERE x = "y" LIMIT 5
+            SCAN FROM WORKING ALL
+            | RECALL FROM EPISODIC WHERE x = "y" LIMIT 5
         ''')
         task_list = plan(execution_plan)
         assert task_list.total_budget_ms == 80
@@ -136,10 +136,10 @@ class TestPlanPipeline:
 
 class TestPlanReflect:
     def test_reflect_produces_source_tasks_plus_merge(self):
+        """v0.5: REFLECT uses FROM instead of INCLUDE."""
         execution_plan = parse('''
-            REFLECT incident_id = {current}
-            INCLUDE EPISODIC
-            INCLUDE SEMANTIC
+            REFLECT FROM EPISODIC,
+                    FROM SEMANTIC
         ''')
         task_list = plan(execution_plan)
 
@@ -149,9 +149,8 @@ class TestPlanReflect:
 
     def test_reflect_merge_task_depends_on_sources(self):
         execution_plan = parse('''
-            REFLECT x = {y}
-            INCLUDE EPISODIC
-            INCLUDE PROCEDURAL
+            REFLECT FROM EPISODIC,
+                    FROM PROCEDURAL
         ''')
         task_list = plan(execution_plan)
 
@@ -166,10 +165,9 @@ class TestPlanReflect:
 
     def test_reflect_with_three_sources(self):
         execution_plan = parse('''
-            REFLECT x = {y}
-            INCLUDE EPISODIC
-            INCLUDE SEMANTIC
-            INCLUDE WORKING
+            REFLECT FROM EPISODIC,
+                    FROM SEMANTIC,
+                    FROM WORKING
         ''')
         task_list = plan(execution_plan)
 
@@ -182,9 +180,9 @@ class TestFullScenarios:
         """RTB scenario from spec."""
         execution_plan = parse('''
             PIPELINE bid_decision TIMEOUT 80ms
-            LOAD TOOLS WHERE task = "bidding" LIMIT 3
-            | LOOKUP SEMANTIC KEY url = {url}
-            | RECALL EPISODIC WHERE url = {url} LIMIT 10
+            LOAD FROM TOOLS WHERE task = "bidding" LIMIT 3
+            | LOOKUP FROM SEMANTIC KEY url = {url}
+            | RECALL FROM EPISODIC WHERE url = {url} LIMIT 10
         ''')
         task_list = plan(execution_plan)
         assert len(task_list.tasks) == 3
@@ -195,8 +193,8 @@ class TestFullScenarios:
         """K8s scenario from spec."""
         execution_plan = parse('''
             PIPELINE incident TIMEOUT 200ms
-            LOOKUP PROCEDURAL PATTERN $log_event THRESHOLD 0.5
-            | RECALL EPISODIC WHERE pod = "payments-api" LIMIT 5
+            LOOKUP FROM PROCEDURAL PATTERN $log_event THRESHOLD 0.5
+            | RECALL FROM EPISODIC WHERE pod = "payments-api" LIMIT 5
         ''')
         task_list = plan(execution_plan)
         assert len(task_list.tasks) == 2

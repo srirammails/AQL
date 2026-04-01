@@ -1,6 +1,7 @@
 // grammar/aql.lark
 // AQL v0.5 Grammar — Lark Parser
 // Source: github.com/srirammails/AQL/blob/main/spec/AQL_SPEC_v0.5.md
+// WITH FROM/INTO explicit direction
 
 // ── Top Level ──────────────────────────────────────────────────────────────
 program    : statement+
@@ -10,19 +11,24 @@ statement  : pipeline_stmt
            | write_stmt
            | read_stmt
 
-// ── Read Statements ────────────────────────────────────────────────────────
-read_stmt  : verb memory_type? predicate modifier*
-
-verb       : "LOOKUP"i -> lookup_verb
-           | "RECALL"i -> recall_verb
-           | "SCAN"i   -> scan_verb
-           | "LOAD"i   -> load_verb
-
+// ── Memory Types ──────────────────────────────────────────────────────────
 memory_type : "EPISODIC"i   -> episodic_type
             | "SEMANTIC"i   -> semantic_type
             | "PROCEDURAL"i -> procedural_type
             | "WORKING"i    -> working_type
             | "TOOLS"i      -> tools_type
+
+memory_target : memory_type
+              | "ALL"i      -> all_target
+
+// ── Read Statements ────────────────────────────────────────────────────────
+// v0.5: verb "FROM" memory_target predicate modifier*
+read_stmt  : verb "FROM"i memory_target predicate modifier*
+
+verb       : "LOOKUP"i -> lookup_verb
+           | "RECALL"i -> recall_verb
+           | "SCAN"i   -> scan_verb
+           | "LOAD"i   -> load_verb
 
 predicate  : exact_pred
            | similarity_pred
@@ -62,15 +68,20 @@ comparator : ">=" -> gte_op
            | "<"  -> lt_op
 
 // ── Write Statements ───────────────────────────────────────────────────────
+// v0.5: STORE INTO, UPDATE INTO
 write_stmt  : store_stmt
             | update_stmt
             | link_stmt
 
-store_stmt  : "STORE"i memory_type payload scope_mod? namespace_mod? ttl_mod?
+store_stmt  : "STORE"i "INTO"i memory_type payload scope_mod? namespace_mod? ttl_mod?
 
-update_stmt : "UPDATE"i memory_type "WHERE"i condition payload
+update_stmt : "UPDATE"i "INTO"i memory_type "WHERE"i condition payload
 
-link_stmt   : "LINK"i memory_type key_expr "TO"i memory_type key_expr
+// v0.5: LINK FROM memory_type WHERE condition TO memory_type WHERE condition TYPE? WEIGHT?
+link_stmt   : "LINK"i "FROM"i memory_type "WHERE"i condition "TO"i memory_type "WHERE"i condition link_type_mod? link_weight_mod?
+
+link_type_mod   : "TYPE"i ESCAPED_STRING
+link_weight_mod : "WEIGHT"i DECIMAL
 
 payload     : "(" field_value_list ")"
 
@@ -78,7 +89,8 @@ field_value_list : field_value ("," field_value)*
 field_value      : field "=" value
 
 // ── Forget Statement ───────────────────────────────────────────────────────
-forget_stmt : "FORGET"i memory_type predicate
+// v0.5: FORGET FROM memory_target predicate
+forget_stmt : "FORGET"i "FROM"i memory_target predicate
 
 // ── Modifiers ──────────────────────────────────────────────────────────────
 modifier    : return_mod
@@ -91,6 +103,8 @@ modifier    : return_mod
             | source_mod
             | aggregate_mod
             | having_mod
+            | with_links_mod
+            | follow_mod
 
 aggregate_mod  : "AGGREGATE"i aggregate_func ("," aggregate_func)*
 
@@ -104,6 +118,15 @@ agg_op         : "COUNT"i -> count_op
                | "MAX"i   -> max_op
 
 having_mod     : "HAVING"i condition
+
+// v0.5: WITH LINKS (ALL | TYPE string)
+with_links_mod : "WITH"i "LINKS"i links_target
+
+links_target   : "ALL"i              -> links_all
+               | "TYPE"i ESCAPED_STRING -> links_type
+
+// v0.5: FOLLOW LINKS TYPE string
+follow_mod     : "FOLLOW"i "LINKS"i "TYPE"i ESCAPED_STRING
 
 return_mod     : "RETURN"i field_list
 field_list     : field ("," field)*
@@ -122,7 +145,7 @@ sort_dir       : "ASC"i  -> asc_dir
 
 confidence_mod : "MIN_CONFIDENCE"i DECIMAL
 
-source_mod     : "FROM"i identifier_list
+source_mod     : "SOURCE"i identifier_list
 identifier_list : identifier ("," identifier)*
 
 // Write-specific modifiers
@@ -143,12 +166,14 @@ time_unit     : "ms" -> ms_unit
               | "d"  -> d_unit
 
 // ── Reflect Statement ──────────────────────────────────────────────────────
-reflect_stmt  : "REFLECT"i context_expr reflect_source+ modifier* then_clause?
+// v0.5: REFLECT reflect_sources modifier* then_clause?
+// reflect_sources = FROM memory_type predicate, ... OR FROM ALL predicate
+reflect_stmt  : "REFLECT"i reflect_sources modifier* then_clause?
 
-context_expr  : key_expr
-              | identifier
+reflect_sources : reflect_source ("," reflect_source)*
+                | "FROM"i "ALL"i predicate?  -> reflect_from_all
 
-reflect_source : "INCLUDE"i memory_type predicate?
+reflect_source : "FROM"i memory_type predicate?
 
 then_clause   : "THEN"i write_stmt
 

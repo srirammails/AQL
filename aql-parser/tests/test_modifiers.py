@@ -1,55 +1,57 @@
 # tests/test_modifiers.py
-"""Unit tests for AQL modifiers."""
+"""Unit tests for AQL modifiers (v0.5 syntax with FROM/INTO)."""
 
 import pytest
 from aql_parser import parse
 from aql_parser import ReturnMod, LimitMod, OrderMod
 from aql_parser import ThresholdMod, ConfidenceMod, SourceMod, WeightMod
 from aql_parser import AggregateMod, HavingMod, AggOp, WindowType
+from aql_parser import WithLinksMod, FollowMod
 
 
 class TestModifiers:
     def test_return(self):
-        plan = parse('RECALL EPISODIC WHERE x = "y" RETURN field1, field2')
+        plan = parse('RECALL FROM EPISODIC WHERE x = "y" RETURN field1, field2')
         ret = plan.get_modifier(ReturnMod)
         assert ret is not None
         assert "field1" in ret.fields
         assert "field2" in ret.fields
 
     def test_limit(self):
-        plan = parse('RECALL EPISODIC WHERE x = "y" LIMIT 10')
+        plan = parse('RECALL FROM EPISODIC WHERE x = "y" LIMIT 10')
         lim = plan.get_modifier(LimitMod)
         assert lim.value == 10
 
     def test_order_asc(self):
-        plan = parse('RECALL EPISODIC WHERE x = "y" ORDER BY time ASC')
+        plan = parse('RECALL FROM EPISODIC WHERE x = "y" ORDER BY time ASC')
         order = plan.get_modifier(OrderMod)
         assert order.field == "time"
         assert order.direction == "ASC"
 
     def test_order_desc(self):
-        plan = parse('RECALL EPISODIC WHERE x = "y" ORDER BY time DESC')
+        plan = parse('RECALL FROM EPISODIC WHERE x = "y" ORDER BY time DESC')
         order = plan.get_modifier(OrderMod)
         assert order.direction == "DESC"
 
     def test_order_default_asc(self):
-        plan = parse('RECALL EPISODIC WHERE x = "y" ORDER BY time')
+        plan = parse('RECALL FROM EPISODIC WHERE x = "y" ORDER BY time')
         order = plan.get_modifier(OrderMod)
         assert order.direction == "ASC"
 
     def test_threshold(self):
-        plan = parse('LOOKUP PROCEDURAL PATTERN $x THRESHOLD 0.85')
+        plan = parse('LOOKUP FROM PROCEDURAL PATTERN $x THRESHOLD 0.85')
         t = plan.get_modifier(ThresholdMod)
         assert t.value == pytest.approx(0.85)
 
     def test_min_confidence(self):
-        plan = parse('RECALL EPISODIC WHERE x = "y" MIN_CONFIDENCE 0.7')
+        plan = parse('RECALL FROM EPISODIC WHERE x = "y" MIN_CONFIDENCE 0.7')
         c = plan.get_modifier(ConfidenceMod)
         assert c.value == pytest.approx(0.7)
 
     def test_from_sources(self):
+        # Note: v0.5 changed FROM to SOURCE to avoid conflict with FROM direction
         plan = parse(
-            'LOOKUP PROCEDURAL WHERE pattern_id = {x} FROM confluence, jira'
+            'LOOKUP FROM PROCEDURAL WHERE pattern_id = {x} SOURCE confluence, jira'
         )
         src = plan.get_modifier(SourceMod)
         assert "confluence" in src.sources
@@ -57,34 +59,34 @@ class TestModifiers:
 
     def test_weight(self):
         plan = parse(
-            'RECALL SEMANTIC LIKE $ctx WEIGHT relevance_score'
+            'RECALL FROM SEMANTIC LIKE $ctx WEIGHT relevance_score'
         )
         w = plan.get_modifier(WeightMod)
         assert w.field == "relevance_score"
 
     def test_timeout(self):
-        plan = parse('PIPELINE test TIMEOUT 80ms SCAN WORKING ALL')
+        plan = parse('PIPELINE test TIMEOUT 80ms SCAN FROM WORKING ALL')
         assert plan.timeout.value == 80
         assert plan.timeout.unit == "ms"
 
     def test_ttl_minutes(self):
-        plan = parse('STORE WORKING (x = "y") TTL 5m')
+        plan = parse('STORE INTO WORKING (x = "y") TTL 5m')
         assert plan.ttl.value == 5
         assert plan.ttl.unit == "m"
 
     def test_ttl_days(self):
-        plan = parse('STORE WORKING (x = "y") TTL 90d')
+        plan = parse('STORE INTO WORKING (x = "y") TTL 90d')
         assert plan.ttl.value == 90
         assert plan.ttl.unit == "d"
 
     def test_ttl_hours(self):
-        plan = parse('STORE WORKING (x = "y") TTL 24h')
+        plan = parse('STORE INTO WORKING (x = "y") TTL 24h')
         assert plan.ttl.value == 24
         assert plan.ttl.unit == "h"
 
     def test_multiple_modifiers(self):
         plan = parse('''
-            RECALL EPISODIC WHERE pod = "x"
+            RECALL FROM EPISODIC WHERE pod = "x"
             MIN_CONFIDENCE 0.7
             ORDER BY time DESC
             LIMIT 5
@@ -100,44 +102,44 @@ class TestWindowPredicate:
     """Tests for WINDOW predicate (v0.5)."""
 
     def test_window_last_n(self):
-        plan = parse('SCAN WORKING WINDOW LAST 10')
+        plan = parse('SCAN FROM WORKING WINDOW LAST 10')
         assert plan.predicate.type == "window"
         assert plan.predicate.window.window_type == WindowType.LAST_N
         assert plan.predicate.window.count == 10
 
     def test_window_last_duration_seconds(self):
-        plan = parse('SCAN WORKING WINDOW LAST 30s')
+        plan = parse('SCAN FROM WORKING WINDOW LAST 30s')
         assert plan.predicate.window.window_type == WindowType.LAST_DUR
         assert plan.predicate.window.duration_value == 30
         assert plan.predicate.window.duration_unit == "s"
 
     def test_window_last_duration_minutes(self):
-        plan = parse('SCAN WORKING WINDOW LAST 5m')
+        plan = parse('SCAN FROM WORKING WINDOW LAST 5m')
         assert plan.predicate.window.window_type == WindowType.LAST_DUR
         assert plan.predicate.window.duration_value == 5
         assert plan.predicate.window.duration_unit == "m"
 
     def test_window_last_duration_ms(self):
-        plan = parse('SCAN WORKING WINDOW LAST 500ms')
+        plan = parse('SCAN FROM WORKING WINDOW LAST 500ms')
         assert plan.predicate.window.window_type == WindowType.LAST_DUR
         assert plan.predicate.window.duration_value == 500
         assert plan.predicate.window.duration_unit == "ms"
 
     def test_window_top_by(self):
-        plan = parse('SCAN WORKING WINDOW TOP 3 BY attention_weight')
+        plan = parse('SCAN FROM WORKING WINDOW TOP 3 BY attention_weight')
         assert plan.predicate.window.window_type == WindowType.TOP
         assert plan.predicate.window.count == 3
         assert plan.predicate.window.field == "attention_weight"
 
     def test_window_since(self):
-        plan = parse('SCAN WORKING WINDOW SINCE event_id = "inc-001"')
+        plan = parse('SCAN FROM WORKING WINDOW SINCE event_id = "inc-001"')
         assert plan.predicate.window.window_type == WindowType.SINCE
         assert plan.predicate.window.key_expr.field == "event_id"
         assert plan.predicate.window.key_expr.value == "inc-001"
 
     def test_window_with_return(self):
         plan = parse('''
-            SCAN WORKING WINDOW LAST 10
+            SCAN FROM WORKING WINDOW LAST 10
             RETURN event, status, timestamp
         ''')
         assert plan.predicate.window.window_type == WindowType.LAST_N
@@ -150,7 +152,7 @@ class TestAggregateModifier:
     """Tests for AGGREGATE modifier (v0.5)."""
 
     def test_aggregate_count_star(self):
-        plan = parse('RECALL EPISODIC WHERE pod = "x" AGGREGATE COUNT(*) AS total')
+        plan = parse('RECALL FROM EPISODIC WHERE pod = "x" AGGREGATE COUNT(*) AS total')
         agg = plan.get_modifier(AggregateMod)
         assert len(agg.functions) == 1
         assert agg.functions[0].op == AggOp.COUNT
@@ -158,31 +160,31 @@ class TestAggregateModifier:
         assert agg.functions[0].alias == "total"
 
     def test_aggregate_avg(self):
-        plan = parse('RECALL EPISODIC WHERE url = "x" AGGREGATE AVG(bid_price) AS avg_cpm')
+        plan = parse('RECALL FROM EPISODIC WHERE url = "x" AGGREGATE AVG(bid_price) AS avg_cpm')
         agg = plan.get_modifier(AggregateMod)
         assert agg.functions[0].op == AggOp.AVG
         assert agg.functions[0].field == "bid_price"
         assert agg.functions[0].alias == "avg_cpm"
 
     def test_aggregate_sum(self):
-        plan = parse('RECALL EPISODIC WHERE x = "y" AGGREGATE SUM(amount) AS total_amount')
+        plan = parse('RECALL FROM EPISODIC WHERE x = "y" AGGREGATE SUM(amount) AS total_amount')
         agg = plan.get_modifier(AggregateMod)
         assert agg.functions[0].op == AggOp.SUM
         assert agg.functions[0].field == "amount"
 
     def test_aggregate_min(self):
-        plan = parse('RECALL EPISODIC WHERE x = "y" AGGREGATE MIN(latency) AS min_latency')
+        plan = parse('RECALL FROM EPISODIC WHERE x = "y" AGGREGATE MIN(latency) AS min_latency')
         agg = plan.get_modifier(AggregateMod)
         assert agg.functions[0].op == AggOp.MIN
 
     def test_aggregate_max(self):
-        plan = parse('LOOKUP PROCEDURAL WHERE x = "y" AGGREGATE MAX(confidence) AS best')
+        plan = parse('LOOKUP FROM PROCEDURAL WHERE x = "y" AGGREGATE MAX(confidence) AS best')
         agg = plan.get_modifier(AggregateMod)
         assert agg.functions[0].op == AggOp.MAX
 
     def test_aggregate_multiple(self):
         plan = parse('''
-            RECALL EPISODIC WHERE url = "sports.example.com"
+            RECALL FROM EPISODIC WHERE url = "sports.example.com"
             AGGREGATE AVG(bid_price) AS avg_cpm, COUNT(*) AS impressions
         ''')
         agg = plan.get_modifier(AggregateMod)
@@ -194,7 +196,7 @@ class TestAggregateModifier:
 
     def test_aggregate_with_other_modifiers(self):
         plan = parse('''
-            RECALL EPISODIC WHERE pod = "payments"
+            RECALL FROM EPISODIC WHERE pod = "payments"
             AGGREGATE COUNT(*) AS total, AVG(resolution_time) AS avg_time
             MIN_CONFIDENCE 0.7
             LIMIT 5
@@ -212,7 +214,7 @@ class TestHavingModifier:
 
     def test_having_gt(self):
         plan = parse('''
-            RECALL EPISODIC WHERE campaign = "summer"
+            RECALL FROM EPISODIC WHERE campaign = "summer"
             AGGREGATE COUNT(*) AS incidents
             HAVING incidents > 5
         ''')
@@ -223,7 +225,7 @@ class TestHavingModifier:
 
     def test_having_gte(self):
         plan = parse('''
-            RECALL EPISODIC WHERE x = "y"
+            RECALL FROM EPISODIC WHERE x = "y"
             AGGREGATE AVG(score) AS avg_score
             HAVING avg_score >= 0.8
         ''')
@@ -233,7 +235,7 @@ class TestHavingModifier:
 
     def test_having_eq(self):
         plan = parse('''
-            RECALL EPISODIC WHERE x = "y"
+            RECALL FROM EPISODIC WHERE x = "y"
             AGGREGATE COUNT(*) AS count
             HAVING count = 10
         ''')
@@ -242,7 +244,7 @@ class TestHavingModifier:
 
     def test_aggregate_having_return(self):
         plan = parse('''
-            RECALL EPISODIC WHERE campaign = "summer"
+            RECALL FROM EPISODIC WHERE campaign = "summer"
             AGGREGATE COUNT(*) AS incidents
             HAVING incidents > 5
             RETURN url, incidents
@@ -256,3 +258,51 @@ class TestHavingModifier:
         assert having is not None
         assert "incidents" in ret.fields
         assert order.direction == "DESC"
+
+
+class TestWithLinksModifier:
+    """Tests for WITH LINKS modifier (v0.5)."""
+
+    def test_with_links_all(self):
+        plan = parse('''
+            LOOKUP FROM PROCEDURAL WHERE pattern_id = "oom-fix"
+            WITH LINKS ALL
+        ''')
+        with_links = plan.get_modifier(WithLinksMod)
+        assert with_links.is_all is True
+        assert with_links.target == "ALL"
+
+    def test_with_links_type(self):
+        plan = parse('''
+            LOOKUP FROM PROCEDURAL WHERE pattern_id = "oom-fix"
+            WITH LINKS TYPE "applied_to"
+        ''')
+        with_links = plan.get_modifier(WithLinksMod)
+        assert with_links.is_all is False
+        assert with_links.target == "applied_to"
+
+
+class TestFollowLinksModifier:
+    """Tests for FOLLOW LINKS modifier (v0.5)."""
+
+    def test_follow_links_type(self):
+        plan = parse('''
+            RECALL FROM SEMANTIC LIKE $embedding
+            FOLLOW LINKS TYPE "triggers"
+        ''')
+        follow = plan.get_modifier(FollowMod)
+        assert follow.link_type == "triggers"
+
+    def test_follow_links_with_other_modifiers(self):
+        plan = parse('''
+            RECALL FROM SEMANTIC WHERE concept = "kubernetes_oom"
+            FOLLOW LINKS TYPE "triggers"
+            LIMIT 10
+            RETURN procedures, link_type
+        ''')
+        follow = plan.get_modifier(FollowMod)
+        limit = plan.get_modifier(LimitMod)
+        ret = plan.get_modifier(ReturnMod)
+        assert follow.link_type == "triggers"
+        assert limit.value == 10
+        assert "procedures" in ret.fields
