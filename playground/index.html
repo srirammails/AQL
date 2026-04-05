@@ -481,7 +481,7 @@
                 chip.addEventListener('click', () => {
                     const query = chip.dataset.query;
                     document.getElementById('query').value = query;
-                    executeQuery();
+                    document.getElementById('query').focus();
                 });
             });
         }

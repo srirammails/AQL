@@ -210,7 +210,8 @@
         textarea {
             flex: 1;
             width: 100%;
-            min-height: 150px;
+            height: 150px;
+            max-height: 150px;
             background: var(--bg);
             border: none;
             color: var(--text);
@@ -218,6 +219,7 @@
             font-size: 13px;
             padding: 12px;
             resize: none;
+            overflow-y: auto;
         }
 
         textarea:focus {
@@ -232,7 +234,8 @@
             font-size: 13px;
             overflow-y: auto;
             white-space: pre-wrap;
-            min-height: 150px;
+            height: 150px;
+            max-height: 150px;
         }
 
         .output-area.success {
@@ -559,7 +562,7 @@ RECALL FROM SEMANTIC WHERE concept = "payments"
             document.querySelectorAll('.example-chip').forEach(chip => {
                 chip.addEventListener('click', () => {
                     document.getElementById('query').value = chip.dataset.query;
-                    executeQuery();
+                    document.getElementById('query').focus();
                 });
             });
         }
