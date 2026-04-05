@@ -6,7 +6,7 @@ A declarative query language for agent memory systems. AQL enables LLM agents to
 RECALL FROM EPISODIC WHERE outcome = "success" ORDER BY confidence DESC LIMIT 5 RETURN *
 ```
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Spec](https://img.shields.io/badge/AQL%20spec-v0.5-teal.svg)](spec/AQL_SPEC_v0.5.md)
 [![Tests](https://img.shields.io/badge/tests-150%20conformance-green.svg)](tests/)
 
@@ -282,7 +282,7 @@ The formal specification lives in `spec/AQL_SPEC_v0.5.md`. Key design principles
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+Apache 2.0 — see [LICENSE](LICENSE)
 
 ---
 
