@@ -79,8 +79,9 @@ scan_stmt = {
 }
 
 // RECALL FROM EPISODIC WHERE pod = "payments" MIN_CONFIDENCE 0.7
+// Predicate is optional - allows RECALL FROM EPISODIC ORDER BY field
 recall_stmt = {
-    ^"RECALL" ~ ^"FROM" ~ memory_type ~ predicate ~ modifier*
+    ^"RECALL" ~ ^"FROM" ~ memory_type ~ predicate? ~ modifier*
 }
 
 // LOOKUP FROM PROCEDURAL PATTERN $log_events THRESHOLD 0.7

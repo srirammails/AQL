@@ -48,12 +48,12 @@ tests:
   - id: T16-04
     name: "RETURN metadata.version (B20)"
     spec_ref: "B20 RETURN metadata.version"
-    seed_required: [e-001]
+    seed_required: [e-002]
     query: |
-      RECALL FROM EPISODIC WHERE bid_id = "e-001" RETURN bid_id, metadata.version
+      RECALL FROM EPISODIC WHERE bid_id = "e-002" RETURN bid_id, metadata.version
     expect:
       success: true
       count: 1
       contains:
-        - bid_id: "e-001"
+        - bid_id: "e-002"
           "metadata.version": 1

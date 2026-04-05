@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use lancedb::connect;
 
@@ -12,11 +13,26 @@ use crate::error::ClawResult;
 use crate::executor::Executor;
 use crate::types::{MemoryType, QueryResult};
 
+/// A link between two records
+#[derive(Debug, Clone)]
+pub struct Link {
+    pub source_id: String,
+    pub source_type: MemoryType,
+    pub target_id: String,
+    pub target_type: MemoryType,
+    pub link_type: String,
+    pub weight: Option<f32>,
+}
+
+/// Links storage
+pub type LinksStorage = Vec<Link>;
+
 /// ClawDB - Single-node Agent Database
 pub struct ClawDB {
     config: Config,
     backends: HashMap<MemoryType, Arc<LanceBackend>>,
     executor: Executor,
+    links: Arc<RwLock<LinksStorage>>,
 }
 
 impl ClawDB {
@@ -47,11 +63,13 @@ impl ClawDB {
         }
 
         let executor = Executor::new(config.clone());
+        let links = Arc::new(RwLock::new(Vec::new()));
 
         Ok(Self {
             config,
             backends,
             executor,
+            links,
         })
     }
 
@@ -63,7 +81,7 @@ impl ClawDB {
 
     /// Execute an AQL query string
     pub async fn query(&self, aql: &str) -> ClawResult<QueryResult> {
-        self.executor.execute(aql, &self.backends).await
+        self.executor.execute(aql, &self.backends, &self.links).await
     }
 
     /// Execute an AQL query with variables
@@ -73,8 +91,13 @@ impl ClawDB {
         variables: HashMap<String, serde_json::Value>,
     ) -> ClawResult<QueryResult> {
         self.executor
-            .execute_with_vars(aql, &self.backends, variables)
+            .execute_with_vars(aql, &self.backends, &self.links, variables)
             .await
+    }
+
+    /// Get the links storage
+    pub fn links(&self) -> Arc<RwLock<LinksStorage>> {
+        self.links.clone()
     }
 
     /// Get a backend for a specific memory type

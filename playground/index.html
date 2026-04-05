@@ -364,21 +364,29 @@
                 <div class="example-chip-title">STORE → Working</div>
                 <div class="example-chip-code">STORE INTO WORKING (name = "bob", score = 82)</div>
             </div>
-            <div class="example-chip" data-query='STORE INTO EPISODIC (event = "login", user = "alice", timestamp = "2026-04-05")'>
-                <div class="example-chip-title">STORE → Episodic</div>
-                <div class="example-chip-code">STORE INTO EPISODIC (event = "login", user = "alice")</div>
+            <div class="example-chip" data-query='STORE INTO WORKING (name = "charlie", score = 78, active = false) TTL 60s'>
+                <div class="example-chip-title">STORE → With TTL</div>
+                <div class="example-chip-code">STORE INTO WORKING ... TTL 60s</div>
+            </div>
+            <div class="example-chip" data-query='STORE INTO EPISODIC (event = "login", user = "alice", success = true) SCOPE private NAMESPACE "auth-service"'>
+                <div class="example-chip-title">STORE → Scoped</div>
+                <div class="example-chip-code">STORE ... SCOPE private NAMESPACE "auth"</div>
             </div>
             <div class="example-chip" data-query='STORE INTO EPISODIC (event = "purchase", user = "bob", amount = 99.99)'>
                 <div class="example-chip-title">STORE → Episodic</div>
-                <div class="example-chip-code">STORE INTO EPISODIC (event = "purchase", amount = 99.99)</div>
+                <div class="example-chip-code">STORE INTO EPISODIC (event = "purchase")</div>
             </div>
-            <div class="example-chip" data-query='STORE INTO TOOLS (name = "web_search", ranking = 0.95, category = "search")'>
-                <div class="example-chip-title">STORE → Tools</div>
-                <div class="example-chip-code">STORE INTO TOOLS (name = "web_search", ranking = 0.95)</div>
+            <div class="example-chip" data-query='STORE INTO PROCEDURAL (pattern = "retry_strategy", steps = "1. wait 2. retry 3. backoff", confidence = 0.85, success_count = 10, failure_count = 2)'>
+                <div class="example-chip-title">STORE → Procedural</div>
+                <div class="example-chip-code">STORE INTO PROCEDURAL (pattern = "retry")</div>
             </div>
-            <div class="example-chip" data-query='STORE INTO TOOLS (name = "calculator", ranking = 0.8, category = "math")'>
+            <div class="example-chip" data-query='STORE INTO TOOLS (name = "web_search", ranking = 0.95, category = "search", task = "retrieval")'>
                 <div class="example-chip-title">STORE → Tools</div>
-                <div class="example-chip-code">STORE INTO TOOLS (name = "calculator", ranking = 0.8)</div>
+                <div class="example-chip-code">STORE INTO TOOLS (name = "web_search")</div>
+            </div>
+            <div class="example-chip" data-query='STORE INTO TOOLS (name = "calculator", ranking = 0.8, category = "math", task = "compute")'>
+                <div class="example-chip-title">STORE → Tools</div>
+                <div class="example-chip-code">STORE INTO TOOLS (name = "calculator")</div>
             </div>
 
             <!-- RECALL examples -->
@@ -386,71 +394,133 @@
                 <div class="example-chip-title">RECALL → Filter</div>
                 <div class="example-chip-code">RECALL FROM WORKING WHERE score > 80</div>
             </div>
-            <div class="example-chip" data-query='RECALL FROM WORKING WHERE name = "alice"'>
-                <div class="example-chip-title">RECALL → Exact Match</div>
-                <div class="example-chip-code">RECALL FROM WORKING WHERE name = "alice"</div>
+            <div class="example-chip" data-query='RECALL FROM WORKING WHERE (score > 80 AND active = true) OR name = "charlie"'>
+                <div class="example-chip-title">RECALL → Complex</div>
+                <div class="example-chip-code">WHERE (A AND B) OR C</div>
             </div>
-            <div class="example-chip" data-query='RECALL FROM EPISODIC WHERE event = "login"'>
-                <div class="example-chip-title">RECALL → Episodic</div>
-                <div class="example-chip-code">RECALL FROM EPISODIC WHERE event = "login"</div>
+            <div class="example-chip" data-query='RECALL FROM WORKING ORDER BY score DESC LIMIT 3'>
+                <div class="example-chip-title">RECALL → ORDER + LIMIT</div>
+                <div class="example-chip-code">ORDER BY score DESC LIMIT 3</div>
             </div>
-            <div class="example-chip" data-query='RECALL FROM WORKING WHERE score > 80 ORDER BY score DESC'>
-                <div class="example-chip-title">RECALL → ORDER BY</div>
-                <div class="example-chip-code">RECALL FROM WORKING ORDER BY score DESC</div>
+            <div class="example-chip" data-query='RECALL FROM WORKING WHERE active = true RETURN name, score'>
+                <div class="example-chip-title">RECALL → RETURN</div>
+                <div class="example-chip-code">RETURN name, score</div>
             </div>
-            <div class="example-chip" data-query='RECALL FROM WORKING WHERE active = true LIMIT 5'>
-                <div class="example-chip-title">RECALL → LIMIT</div>
-                <div class="example-chip-code">RECALL FROM WORKING WHERE active = true LIMIT 5</div>
+            <div class="example-chip" data-query='RECALL FROM EPISODIC WHERE event = "login" SCOPE private NAMESPACE "auth-service"'>
+                <div class="example-chip-title">RECALL → Scoped</div>
+                <div class="example-chip-code">RECALL ... SCOPE private NAMESPACE</div>
+            </div>
+            <div class="example-chip" data-query='RECALL FROM PROCEDURAL WHERE confidence > 0.7'>
+                <div class="example-chip-title">RECALL → Procedural</div>
+                <div class="example-chip-code">RECALL FROM PROCEDURAL</div>
             </div>
 
-            <!-- LOAD examples -->
-            <div class="example-chip" data-query='LOAD FROM TOOLS WHERE ranking > 0.5'>
-                <div class="example-chip-title">LOAD → Tools</div>
-                <div class="example-chip-code">LOAD FROM TOOLS WHERE ranking > 0.5</div>
+            <!-- AGGREGATE + HAVING examples -->
+            <div class="example-chip" data-query='RECALL FROM WORKING AGGREGATE COUNT(*) AS total, AVG(score) AS avg_score, MAX(score) AS max, MIN(score) AS min'>
+                <div class="example-chip-title">AGGREGATE → All Funcs</div>
+                <div class="example-chip-code">COUNT, AVG, MAX, MIN</div>
             </div>
-            <div class="example-chip" data-query='LOAD FROM TOOLS WHERE ranking > 0.5 ORDER BY ranking DESC'>
-                <div class="example-chip-title">LOAD → Ranked</div>
-                <div class="example-chip-code">LOAD FROM TOOLS ORDER BY ranking DESC</div>
+            <div class="example-chip" data-query='RECALL FROM WORKING AGGREGATE COUNT(*) AS n, AVG(score) AS avg HAVING avg > 80'>
+                <div class="example-chip-title">AGGREGATE + HAVING</div>
+                <div class="example-chip-code">AGGREGATE ... HAVING avg > 80</div>
+            </div>
+            <div class="example-chip" data-query='RECALL FROM EPISODIC AGGREGATE SUM(amount) AS total_spend'>
+                <div class="example-chip-title">AGGREGATE → SUM</div>
+                <div class="example-chip-code">SUM(amount) AS total_spend</div>
+            </div>
+
+            <!-- LOAD & LOOKUP examples -->
+            <div class="example-chip" data-query='LOAD FROM TOOLS WHERE ranking > 0.7 ORDER BY ranking DESC'>
+                <div class="example-chip-title">LOAD → Ranked Tools</div>
+                <div class="example-chip-code">LOAD FROM TOOLS ORDER BY ranking</div>
+            </div>
+            <div class="example-chip" data-query='LOOKUP FROM PROCEDURAL WHERE pattern = "retry_strategy"'>
+                <div class="example-chip-title">LOOKUP → Pattern</div>
+                <div class="example-chip-code">LOOKUP FROM PROCEDURAL</div>
             </div>
 
             <!-- SCAN examples -->
             <div class="example-chip" data-query='SCAN FROM WORKING WINDOW LAST 5'>
-                <div class="example-chip-title">SCAN → Window</div>
-                <div class="example-chip-code">SCAN FROM WORKING WINDOW LAST 5</div>
+                <div class="example-chip-title">SCAN → Last N</div>
+                <div class="example-chip-code">SCAN WINDOW LAST 5</div>
             </div>
-            <div class="example-chip" data-query='SCAN FROM WORKING WINDOW LAST 10'>
-                <div class="example-chip-title">SCAN → Last 10</div>
-                <div class="example-chip-code">SCAN FROM WORKING WINDOW LAST 10</div>
+            <div class="example-chip" data-query='SCAN FROM WORKING WINDOW TOP 3 BY score'>
+                <div class="example-chip-title">SCAN → TOP BY</div>
+                <div class="example-chip-code">SCAN WINDOW TOP 3 BY score</div>
+            </div>
+            <div class="example-chip" data-query='SCAN FROM WORKING WINDOW LAST 30s'>
+                <div class="example-chip-title">SCAN → Duration</div>
+                <div class="example-chip-code">SCAN WINDOW LAST 30s</div>
             </div>
 
             <!-- SEMANTIC examples -->
-            <div class="example-chip" data-query='RECALL FROM SEMANTIC LIKE "programming"'>
-                <div class="example-chip-title">SEMANTIC → Search</div>
-                <div class="example-chip-code">RECALL FROM SEMANTIC LIKE "programming"</div>
+            <div class="example-chip" data-query='RECALL FROM SEMANTIC LIKE "machine learning" LIMIT 5'>
+                <div class="example-chip-title">SEMANTIC → ML</div>
+                <div class="example-chip-code">RECALL SEMANTIC LIKE "machine learning"</div>
             </div>
             <div class="example-chip" data-query='RECALL FROM SEMANTIC LIKE "database"'>
-                <div class="example-chip-title">SEMANTIC → Search</div>
+                <div class="example-chip-title">SEMANTIC → DB</div>
                 <div class="example-chip-code">RECALL FROM SEMANTIC LIKE "database"</div>
             </div>
-            <div class="example-chip" data-query='RECALL FROM SEMANTIC LIKE "kubernetes"'>
-                <div class="example-chip-title">SEMANTIC → Search</div>
-                <div class="example-chip-code">RECALL FROM SEMANTIC LIKE "kubernetes"</div>
+
+            <!-- LINK + FOLLOW LINKS examples -->
+            <div class="example-chip" data-query='LINK FROM WORKING WHERE name = "alice" TO EPISODIC WHERE event = "login" AS "performed" WITH WEIGHT 1.0'>
+                <div class="example-chip-title">LINK → Create</div>
+                <div class="example-chip-code">LINK FROM ... TO ... AS "performed"</div>
+            </div>
+            <div class="example-chip" data-query='LINK FROM PROCEDURAL WHERE pattern = "retry_strategy" TO TOOLS WHERE category = "search" AS "uses_tool"'>
+                <div class="example-chip-title">LINK → Proc→Tool</div>
+                <div class="example-chip-code">LINK PROCEDURAL TO TOOLS AS "uses"</div>
+            </div>
+            <div class="example-chip" data-query='RECALL FROM WORKING WITH LINKS ALL'>
+                <div class="example-chip-title">WITH LINKS ALL</div>
+                <div class="example-chip-code">RECALL ... WITH LINKS ALL</div>
+            </div>
+            <div class="example-chip" data-query='RECALL FROM WORKING WHERE name = "alice" FOLLOW LINKS "performed" DEPTH 1'>
+                <div class="example-chip-title">FOLLOW LINKS</div>
+                <div class="example-chip-code">FOLLOW LINKS "performed" DEPTH 1</div>
             </div>
 
-            <!-- FORGET examples -->
-            <div class="example-chip" data-query='FORGET FROM WORKING WHERE name = "alice"'>
-                <div class="example-chip-title">FORGET → Delete</div>
-                <div class="example-chip-code">FORGET FROM WORKING WHERE name = "alice"</div>
+            <!-- REFLECT examples -->
+            <div class="example-chip" data-query='REFLECT FROM WORKING, EPISODIC, PROCEDURAL'>
+                <div class="example-chip-title">REFLECT → Multi</div>
+                <div class="example-chip-code">REFLECT FROM WORKING, EPISODIC, PROC</div>
             </div>
-            <div class="example-chip" data-query='FORGET FROM EPISODIC WHERE event = "login"'>
-                <div class="example-chip-title">FORGET → Episodic</div>
-                <div class="example-chip-code">FORGET FROM EPISODIC WHERE event = "login"</div>
+            <div class="example-chip" data-query='REFLECT FROM ALL WITH LINKS ALL'>
+                <div class="example-chip-title">REFLECT → All+Links</div>
+                <div class="example-chip-code">REFLECT FROM ALL WITH LINKS</div>
+            </div>
+            <div class="example-chip" data-query='REFLECT FROM WORKING WHERE score > 90 THEN STORE INTO EPISODIC (milestone = "high_score", achieved = true)'>
+                <div class="example-chip-title">REFLECT → THEN</div>
+                <div class="example-chip-code">REFLECT ... THEN STORE</div>
             </div>
 
-            <!-- UPDATE examples -->
-            <div class="example-chip" data-query='UPDATE INTO WORKING WHERE name = "alice" (score = 100)'>
-                <div class="example-chip-title">UPDATE → Modify</div>
-                <div class="example-chip-code">UPDATE INTO WORKING WHERE name = "alice" (score = 100)</div>
+            <!-- PIPELINE examples -->
+            <div class="example-chip" data-query='PIPELINE setup TIMEOUT 100ms { STORE INTO WORKING (bid = "b1", price = 2.5) } THEN { STORE INTO WORKING (bid = "b2", price = 3.0) } THEN { RECALL FROM WORKING }'>
+                <div class="example-chip-title">PIPELINE → Multi-Stage</div>
+                <div class="example-chip-code">PIPELINE setup TIMEOUT 100ms {...}</div>
+            </div>
+            <div class="example-chip" data-query='PIPELINE rtb_flow TIMEOUT 50ms { RECALL FROM WORKING WHERE price > 2 } THEN { RECALL FROM TOOLS WHERE task = "retrieval" }'>
+                <div class="example-chip-title">PIPELINE → RTB</div>
+                <div class="example-chip-code">PIPELINE rtb_flow TIMEOUT 50ms</div>
+            </div>
+            <div class="example-chip" data-query='PIPELINE analyze TIMEOUT 200ms { RECALL FROM EPISODIC AGGREGATE COUNT(*) AS events } THEN { RECALL FROM PROCEDURAL WHERE confidence > 0.5 }'>
+                <div class="example-chip-title">PIPELINE → Analyze</div>
+                <div class="example-chip-code">PIPELINE with AGGREGATE</div>
+            </div>
+
+            <!-- UPDATE & FORGET examples -->
+            <div class="example-chip" data-query='UPDATE INTO WORKING WHERE name = "alice" (score = 100, level = "expert")'>
+                <div class="example-chip-title">UPDATE → Additive</div>
+                <div class="example-chip-code">UPDATE ... (score = 100, level = "expert")</div>
+            </div>
+            <div class="example-chip" data-query='UPDATE INTO PROCEDURAL WHERE pattern = "retry_strategy" (success_count = 15, confidence = 0.92)'>
+                <div class="example-chip-title">UPDATE → Procedural</div>
+                <div class="example-chip-code">UPDATE PROCEDURAL confidence</div>
+            </div>
+            <div class="example-chip" data-query='FORGET FROM WORKING WHERE active = false'>
+                <div class="example-chip-title">FORGET → Inactive</div>
+                <div class="example-chip-code">FORGET WHERE active = false</div>
             </div>
         </div>
     </div>

@@ -173,12 +173,20 @@ fn parse_recall(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
     let mut inner = pair.into_inner();
 
     let memory_type = parse_memory_type(inner.next().ok_or(ParseError::Missing("memory type"))?)?;
-    let predicate = parse_predicate(inner.next().ok_or(ParseError::Missing("predicate"))?)?;
 
+    // Predicate is optional - defaults to All if not specified
+    let mut predicate = Predicate::All;
     let mut modifiers = Modifiers::default();
+
     for item in inner {
-        if item.as_rule() == Rule::modifier {
-            parse_modifier_into(item, &mut modifiers)?;
+        match item.as_rule() {
+            Rule::predicate => {
+                predicate = parse_predicate(item)?;
+            }
+            Rule::modifier => {
+                parse_modifier_into(item, &mut modifiers)?;
+            }
+            _ => {}
         }
     }
 
@@ -805,7 +813,7 @@ mod tests {
             assert_eq!(r.memory_type, MemoryType::Episodic);
             if let Predicate::Where { conditions } = r.predicate {
                 assert_eq!(conditions.len(), 1);
-                assert_eq!(conditions[0].field, "pod");
+                assert_eq!(conditions[0].field().unwrap(), "pod");
             } else {
                 panic!("Expected Where predicate");
             }
@@ -898,7 +906,8 @@ mod tests {
     #[test]
     fn test_parse_anonymous_pipeline() {
         // Anonymous pipeline (no name) - should generate a default name
-        let stmt = parse("PIPELINE SCAN FROM WORKING | RECALL FROM EPISODIC WHERE pod = \"test\"").unwrap();
+        // Grammar requires TIMEOUT so we include it
+        let stmt = parse("PIPELINE TIMEOUT 50ms SCAN FROM WORKING | RECALL FROM EPISODIC WHERE pod = \"test\"").unwrap();
         if let Statement::Pipeline(p) = stmt {
             // Anonymous pipelines get "_anonymous" as the default name
             assert_eq!(p.name, "_anonymous", "Anonymous pipeline should have '_anonymous' name");
@@ -913,17 +922,17 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_pipeline_without_timeout() {
-        // Pipeline without TIMEOUT modifier - B18 related
-        let stmt = parse("PIPELINE quick_scan SCAN FROM WORKING LIMIT 5");
+    fn test_parse_pipeline_with_timeout() {
+        // Pipeline with TIMEOUT modifier - grammar requires TIMEOUT
+        let stmt = parse("PIPELINE quick_scan TIMEOUT 100ms SCAN FROM WORKING LIMIT 5");
         match stmt {
             Ok(Statement::Pipeline(p)) => {
                 assert_eq!(p.name, "quick_scan");
-                assert!(p.timeout.is_none(), "Pipeline without TIMEOUT should have None");
+                assert!(p.timeout.is_some(), "Pipeline should have TIMEOUT");
                 assert_eq!(p.stages.len(), 1);
             }
             Ok(_) => panic!("Expected Pipeline statement"),
-            Err(e) => panic!("Should parse pipeline without timeout: {}", e),
+            Err(e) => panic!("Should parse pipeline with timeout: {}", e),
         }
     }
 
@@ -1022,8 +1031,8 @@ mod tests {
         if let Statement::Recall(r) = stmt {
             if let Predicate::Where { conditions } = r.predicate {
                 assert_eq!(conditions.len(), 2, "Should have 2 conditions");
-                assert_eq!(conditions[0].logical_op, None, "First condition has no preceding op");
-                assert_eq!(conditions[1].logical_op, Some(LogicalOp::Or), "Second condition should have OR");
+                assert_eq!(conditions[0].logical_op(), None, "First condition has no preceding op");
+                assert_eq!(conditions[1].logical_op(), Some(LogicalOp::Or), "Second condition should have OR");
             } else {
                 panic!("Expected Where predicate");
             }
@@ -1036,8 +1045,8 @@ mod tests {
         if let Statement::Recall(r) = stmt {
             if let Predicate::Where { conditions } = r.predicate {
                 assert_eq!(conditions.len(), 2);
-                assert_eq!(conditions[0].logical_op, None);
-                assert_eq!(conditions[1].logical_op, Some(LogicalOp::And));
+                assert_eq!(conditions[0].logical_op(), None);
+                assert_eq!(conditions[1].logical_op(), Some(LogicalOp::And));
             } else {
                 panic!("Expected Where predicate");
             }
@@ -1050,9 +1059,9 @@ mod tests {
         if let Statement::Recall(r) = stmt {
             if let Predicate::Where { conditions } = r.predicate {
                 assert_eq!(conditions.len(), 3);
-                assert_eq!(conditions[0].logical_op, None);
-                assert_eq!(conditions[1].logical_op, Some(LogicalOp::And));
-                assert_eq!(conditions[2].logical_op, Some(LogicalOp::Or));
+                assert_eq!(conditions[0].logical_op(), None);
+                assert_eq!(conditions[1].logical_op(), Some(LogicalOp::And));
+                assert_eq!(conditions[2].logical_op(), Some(LogicalOp::Or));
             } else {
                 panic!("Expected Where predicate");
             }
@@ -1086,7 +1095,7 @@ mod tests {
         match result {
             Ok(Statement::Forget(f)) => {
                 assert_eq!(f.conditions.len(), 2, "Should have 2 conditions");
-                assert_eq!(f.conditions[1].logical_op, Some(LogicalOp::Or));
+                assert_eq!(f.conditions[1].logical_op(), Some(LogicalOp::Or));
             }
             Ok(_) => panic!("Expected Forget statement"),
             Err(e) => panic!("B12: OR in FORGET failed to parse: {}", e),
@@ -1099,7 +1108,7 @@ mod tests {
         let stmt = parse("RECALL FROM EPISODIC WHERE metadata.pod = \"payments\"").unwrap();
         if let Statement::Recall(r) = stmt {
             if let Predicate::Where { conditions } = r.predicate {
-                assert_eq!(conditions[0].field, "metadata.pod");
+                assert_eq!(conditions[0].field().unwrap(), "metadata.pod");
             } else {
                 panic!("Expected Where predicate");
             }
@@ -1111,7 +1120,7 @@ mod tests {
         let stmt = parse("RECALL FROM WORKING WHERE data.nested.field = \"value\"").unwrap();
         if let Statement::Recall(r) = stmt {
             if let Predicate::Where { conditions } = r.predicate {
-                assert_eq!(conditions[0].field, "data.nested.field");
+                assert_eq!(conditions[0].field().unwrap(), "data.nested.field");
             } else {
                 panic!("Expected Where predicate");
             }

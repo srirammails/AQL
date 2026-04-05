@@ -386,7 +386,21 @@ impl MemoryBackend for LanceBackend {
         let simple_filter = self.build_simple_filter(conditions);
 
         // Apply limit (fetch more to account for post-filtering)
-        let fetch_limit = modifiers.limit.map(|l| l * 2).unwrap_or(1000);
+        // If ORDER BY is specified, we need all records before sorting, so use larger limit
+        // If there are conditions that require JSON filtering, also fetch more
+        let has_json_conditions = conditions.iter().any(|c| {
+            if let aql_parser::Condition::Simple { field, .. } = c {
+                !["id", "namespace", "scope", "created_at", "accessed_at"].contains(&field.as_str())
+            } else {
+                true
+            }
+        });
+        let fetch_limit = if modifiers.order_by.is_some() || has_json_conditions {
+            // Need all matching records for ORDER BY or JSON filtering
+            modifiers.limit.map(|l| l.max(100) * 10).unwrap_or(1000)
+        } else {
+            modifiers.limit.map(|l| l * 2).unwrap_or(1000)
+        };
 
         // Build and execute query using proper LanceDB API
         let batches: Vec<RecordBatch> = if let Some(filter) = simple_filter {
@@ -421,6 +435,19 @@ impl MemoryBackend for LanceBackend {
                     // Check TTL expiry
                     if record.metadata.is_expired() {
                         continue;
+                    }
+                    // Apply SCOPE filtering from modifiers
+                    if let Some(scope) = &modifiers.scope {
+                        let scope_str = format!("{:?}", scope).to_lowercase();
+                        if record.metadata.scope != scope_str {
+                            continue;
+                        }
+                    }
+                    // Apply NAMESPACE filtering from modifiers
+                    if let Some(namespace) = &modifiers.namespace {
+                        if record.metadata.namespace != *namespace {
+                            continue;
+                        }
                     }
                     // Apply full condition filtering (for JSON fields)
                     if self.record_matches_conditions(&record, conditions) {

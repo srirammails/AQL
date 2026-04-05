@@ -190,8 +190,14 @@ impl MemoryRecord {
         if path == "scope" || path == "metadata.scope" {
             return Some(Value::String(self.metadata.scope.clone()));
         }
+        if path == "version" || path == "metadata.version" {
+            return Some(Value::Number(self.metadata.version.into()));
+        }
         if path == "created_at" || path == "metadata.created_at" {
             return Some(Value::Number(self.metadata.created_at.timestamp_millis().into()));
+        }
+        if path == "accessed_at" || path == "metadata.accessed_at" {
+            return Some(Value::Number(self.metadata.accessed_at.timestamp_millis().into()));
         }
 
         // Handle data fields
