@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AQL — Agent Query Language</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text: #c9d1d9;
+            --text-muted: #8b949e;
+            --accent: #58a6ff;
+            --accent-emphasis: #1f6feb;
+            --success: #3fb950;
+            --error: #f85149;
+            --border: #30363d;
+            --code-bg: #161b22;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1012px;
+            margin: 0 auto;
+        }
+
+        /* GitHub-style markdown */
+        h1 {
+            font-size: 2em;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.3em;
+            margin-bottom: 16px;
+        }
+
+        h1 .accent {
+            color: var(--accent);
+        }
+
+        h2 {
+            font-size: 1.5em;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.3em;
+            margin-top: 24px;
+            margin-bottom: 16px;
+        }
+
+        h3 {
+            font-size: 1.25em;
+            margin-top: 24px;
+            margin-bottom: 16px;
+        }
+
+        p {
+            margin-bottom: 16px;
+        }
+
+        a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        code {
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 85%;
+            background: var(--code-bg);
+            padding: 0.2em 0.4em;
+            border-radius: 6px;
+        }
+
+        pre {
+            background: var(--code-bg);
+            border-radius: 6px;
+            padding: 16px;
+            overflow-x: auto;
+            margin-bottom: 16px;
+            border: 1px solid var(--border);
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            font-size: 85%;
+            line-height: 1.45;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            font-size: 12px;
+            font-weight: 500;
+            border-radius: 6px;
+            margin-right: 4px;
+        }
+
+        .badge-blue { background: var(--accent-emphasis); color: white; }
+        .badge-green { background: #238636; color: white; }
+        .badge-purple { background: #8957e5; color: white; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 16px;
+        }
+
+        th, td {
+            border: 1px solid var(--border);
+            padding: 8px 12px;
+            text-align: left;
+        }
+
+        th {
+            background: var(--bg-secondary);
+            font-weight: 600;
+        }
+
+        tr:nth-child(even) {
+            background: var(--bg-secondary);
+        }
+
+        /* Playground Section */
+        .playground {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            margin: 24px 0;
+            overflow: hidden;
+        }
+
+        .playground-header {
+            background: var(--bg-tertiary);
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .playground-title {
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .playground-stats {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .playground-stats .value {
+            color: var(--success);
+            font-weight: 600;
+        }
+
+        .playground-body {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            min-height: 200px;
+        }
+
+        @media (max-width: 768px) {
+            .playground-body {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .playground-input, .playground-output {
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .playground-input {
+            border-right: 1px solid var(--border);
+        }
+
+        @media (max-width: 768px) {
+            .playground-input {
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+            }
+        }
+
+        .pane-header {
+            background: var(--bg-tertiary);
+            padding: 8px 12px;
+            font-size: 12px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        textarea {
+            flex: 1;
+            width: 100%;
+            min-height: 150px;
+            background: var(--bg);
+            border: none;
+            color: var(--text);
+            font-family: 'SFMono-Regular', Consolas, monospace;
+            font-size: 13px;
+            padding: 12px;
+            resize: none;
+        }
+
+        textarea:focus {
+            outline: none;
+        }
+
+        .output-area {
+            flex: 1;
+            background: var(--bg);
+            padding: 12px;
+            font-family: 'SFMono-Regular', Consolas, monospace;
+            font-size: 13px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            min-height: 150px;
+        }
+
+        .output-area.success {
+            border-left: 3px solid var(--success);
+        }
+
+        .output-area.error {
+            border-left: 3px solid var(--error);
+        }
+
+        .playground-actions {
+            background: var(--bg-tertiary);
+            padding: 10px 12px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 8px;
+        }
+
+        button {
+            background: var(--accent-emphasis);
+            color: white;
+            border: none;
+            padding: 6px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: var(--accent);
+        }
+
+        button.secondary {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+
+        button.secondary:hover {
+            background: var(--border);
+        }
+
+        .shortcut {
+            font-size: 11px;
+            opacity: 0.7;
+            margin-left: 4px;
+        }
+
+        /* Examples Scroll */
+        .examples-scroll {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            padding: 12px;
+            background: var(--bg);
+            border-top: 1px solid var(--border);
+        }
+
+        .examples-scroll::-webkit-scrollbar {
+            height: 6px;
+        }
+
+        .examples-scroll::-webkit-scrollbar-track {
+            background: var(--bg-tertiary);
+        }
+
+        .examples-scroll::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+
+        .example-chip {
+            flex-shrink: 0;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 12px;
+        }
+
+        .example-chip:hover {
+            border-color: var(--accent);
+            background: var(--bg-secondary);
+        }
+
+        .example-chip-title {
+            color: var(--accent);
+            font-weight: 500;
+            margin-bottom: 2px;
+        }
+
+        .example-chip-code {
+            font-family: 'SFMono-Regular', Consolas, monospace;
+            color: var(--text-muted);
+            font-size: 11px;
+        }
+
+        /* Loading */
+        .loading {
+            padding: 40px;
+            text-align: center;
+            color: var(--text-muted);
+        }
+
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 12px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .hidden { display: none !important; }
+
+        /* Footer */
+        footer {
+            margin-top: 48px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1><span class="accent">AQL</span> — Agent Query Language</h1>
+
+        <p>
+            <span class="badge badge-blue">Spec v0.5</span>
+            <span class="badge badge-green">150 Tests</span>
+            <span class="badge badge-purple">Apache 2.0</span>
+        </p>
+
+        <p>A declarative query language for agent memory systems. AQL enables LLM agents to store, retrieve, link, and learn from their experiences across five memory types.</p>
+
+        <pre><code>RECALL FROM EPISODIC WHERE outcome = "success" ORDER BY confidence DESC LIMIT 5 RETURN *</code></pre>
+
+        <h2>Interactive Playground</h2>
+
+        <p>Try AQL queries directly in your browser. Click an example or write your own — everything runs locally via WASM.</p>
+
+        <div class="playground">
+            <div class="playground-header">
+                <span class="playground-title">AQL Playground</span>
+                <span class="playground-stats">
+                    Working: <span class="value" id="stat-working">0</span> ·
+                    Episodic: <span class="value" id="stat-episodic">0</span> ·
+                    Tools: <span class="value" id="stat-tools">0</span>
+                </span>
+            </div>
+
+            <div id="loading" class="loading">
+                <div class="spinner"></div>
+                <p>Loading WASM...</p>
+            </div>
+
+            <div id="playground-content" class="hidden">
+                <div class="playground-body">
+                    <div class="playground-input">
+                        <div class="pane-header">Query</div>
+                        <textarea id="query" placeholder="Enter AQL query..."></textarea>
+                    </div>
+                    <div class="playground-output">
+                        <div class="pane-header">Result</div>
+                        <div id="output" class="output-area">Click an example below to get started...</div>
+                    </div>
+                </div>
+                <div class="playground-actions">
+                    <button onclick="executeQuery()">Execute <span class="shortcut">⌘↵</span></button>
+                    <button class="secondary" onclick="clearMemory()">Clear</button>
+                    <button class="secondary" onclick="showStats()">Stats</button>
+                </div>
+                <div class="examples-scroll">
+                    <div class="example-chip" data-query='STORE INTO WORKING (name = "alice", score = 95)'>
+                        <div class="example-chip-title">STORE</div>
+                        <div class="example-chip-code">STORE INTO WORKING (...)</div>
+                    </div>
+                    <div class="example-chip" data-query='STORE INTO WORKING (name = "bob", score = 82)'>
+                        <div class="example-chip-title">STORE</div>
+                        <div class="example-chip-code">STORE INTO WORKING (bob)</div>
+                    </div>
+                    <div class="example-chip" data-query='RECALL FROM WORKING WHERE score > 80'>
+                        <div class="example-chip-title">RECALL</div>
+                        <div class="example-chip-code">WHERE score > 80</div>
+                    </div>
+                    <div class="example-chip" data-query='RECALL FROM WORKING WHERE name = "alice"'>
+                        <div class="example-chip-title">RECALL</div>
+                        <div class="example-chip-code">WHERE name = "alice"</div>
+                    </div>
+                    <div class="example-chip" data-query='STORE INTO EPISODIC (event = "login", user = "alice")'>
+                        <div class="example-chip-title">EPISODIC</div>
+                        <div class="example-chip-code">STORE event</div>
+                    </div>
+                    <div class="example-chip" data-query='RECALL FROM EPISODIC WHERE event = "login"'>
+                        <div class="example-chip-title">EPISODIC</div>
+                        <div class="example-chip-code">RECALL event</div>
+                    </div>
+                    <div class="example-chip" data-query='STORE INTO TOOLS (name = "search", ranking = 0.95)'>
+                        <div class="example-chip-title">TOOLS</div>
+                        <div class="example-chip-code">STORE tool</div>
+                    </div>
+                    <div class="example-chip" data-query='LOAD FROM TOOLS WHERE ranking > 0.5'>
+                        <div class="example-chip-title">LOAD</div>
+                        <div class="example-chip-code">LOAD FROM TOOLS</div>
+                    </div>
+                    <div class="example-chip" data-query='SCAN FROM WORKING WINDOW LAST 5'>
+                        <div class="example-chip-title">SCAN</div>
+                        <div class="example-chip-code">WINDOW LAST 5</div>
+                    </div>
+                    <div class="example-chip" data-query='FORGET FROM WORKING WHERE name = "alice"'>
+                        <div class="example-chip-title">FORGET</div>
+                        <div class="example-chip-code">DELETE record</div>
+                    </div>
+                    <div class="example-chip" data-query='RECALL FROM SEMANTIC LIKE "kubernetes"'>
+                        <div class="example-chip-title">SEMANTIC</div>
+                        <div class="example-chip-code">LIKE "kubernetes"</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <h2>Memory Types</h2>
+
+        <table>
+            <tr>
+                <th>Type</th>
+                <th>Purpose</th>
+                <th>Example</th>
+            </tr>
+            <tr>
+                <td><strong>WORKING</strong></td>
+                <td>Active context for current reasoning</td>
+                <td>Session state, live variables</td>
+            </tr>
+            <tr>
+                <td><strong>EPISODIC</strong></td>
+                <td>Timestamped experiences</td>
+                <td>"User asked about refunds at 2pm"</td>
+            </tr>
+            <tr>
+                <td><strong>SEMANTIC</strong></td>
+                <td>Domain knowledge and concepts</td>
+                <td>"Refund policy requires receipt"</td>
+            </tr>
+            <tr>
+                <td><strong>PROCEDURAL</strong></td>
+                <td>Executable patterns with confidence</td>
+                <td>Steps to process refund (0.92 conf)</td>
+            </tr>
+            <tr>
+                <td><strong>TOOLS</strong></td>
+                <td>Available capabilities</td>
+                <td>API endpoints, functions</td>
+            </tr>
+        </table>
+
+        <h2>Quick Reference</h2>
+
+        <h3>Read Operations (FROM)</h3>
+        <pre><code>SCAN FROM WORKING WINDOW LAST 10            -- Recent context
+RECALL FROM EPISODIC WHERE user = "alice"   -- Query experiences
+LOOKUP FROM SEMANTIC KEY concept = "auth"   -- Direct key lookup
+LOAD FROM TOOLS WHERE category = "api"      -- Load tools</code></pre>
+
+        <h3>Write Operations (INTO)</h3>
+        <pre><code>STORE INTO EPISODIC (event = "login") TTL 7d
+UPDATE INTO PROCEDURAL WHERE pattern = "checkout" (confidence = 0.95)
+FORGET FROM WORKING WHERE stale = true</code></pre>
+
+        <h3>Linking & Traversal</h3>
+        <pre><code>LINK FROM SEMANTIC WHERE concept = "auth"
+     TO PROCEDURAL WHERE pattern = "login_flow"
+     TYPE "implements"
+
+RECALL FROM SEMANTIC WHERE concept = "payments"
+      FOLLOW LINKS TYPE "implements" INTO PROCEDURAL
+      RETURN pattern, confidence</code></pre>
+
+        <h2>Resources</h2>
+
+        <p>
+            <a href="https://github.com/srirammails/AQL">GitHub Repository</a> ·
+            <a href="https://github.com/srirammails/AQL/blob/main/spec/AQL_SPEC_v0.5.md">Specification v0.5</a> ·
+            <a href="https://github.com/srirammails/AQL/tree/main/tests">Test Suite (150 tests)</a>
+        </p>
+
+        <footer>
+            <p>AQL v0.5 · Apache 2.0 · <a href="https://github.com/srirammails/AQL">github.com/srirammails/AQL</a></p>
+        </footer>
+    </div>
+
+    <script type="module">
+        import init, { execute, clear, stats } from './playground/pkg/clawdb_wasm.js';
+
+        let wasmReady = false;
+
+        async function initWasm() {
+            try {
+                await init();
+                wasmReady = true;
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('playground-content').classList.remove('hidden');
+                updateStats();
+                setupExamples();
+            } catch (e) {
+                document.getElementById('loading').innerHTML =
+                    `<p style="color: var(--error)">Failed to load WASM: ${e.message}</p>`;
+            }
+        }
+
+        function setupExamples() {
+            document.querySelectorAll('.example-chip').forEach(chip => {
+                chip.addEventListener('click', () => {
+                    document.getElementById('query').value = chip.dataset.query;
+                    executeQuery();
+                });
+            });
+        }
+
+        window.executeQuery = function() {
+            if (!wasmReady) return;
+            const query = document.getElementById('query').value.trim();
+            if (!query) return;
+
+            try {
+                const result = execute(query);
+                const parsed = JSON.parse(result);
+                displayResult(parsed);
+                updateStats();
+            } catch (e) {
+                displayResult({ success: false, error: e.message });
+            }
+        };
+
+        window.clearMemory = function() {
+            if (!wasmReady) return;
+            displayResult(JSON.parse(clear()));
+            updateStats();
+        };
+
+        window.showStats = function() {
+            if (!wasmReady) return;
+            displayResult(JSON.parse(stats()));
+        };
+
+        function displayResult(result) {
+            const output = document.getElementById('output');
+            output.className = 'output-area ' + (result.success ? 'success' : 'error');
+            output.textContent = JSON.stringify(result, null, 2);
+        }
+
+        function updateStats() {
+            if (!wasmReady) return;
+            try {
+                const result = JSON.parse(stats());
+                if (result.success && result.data) {
+                    document.getElementById('stat-working').textContent = result.data.working || 0;
+                    document.getElementById('stat-episodic').textContent = result.data.episodic || 0;
+                    document.getElementById('stat-tools').textContent = result.data.tools || 0;
+                }
+            } catch (e) {}
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                window.executeQuery();
+            }
+        });
+
+        initWasm();
+    </script>
+</body>
+</html>
