@@ -31,7 +31,9 @@ RECALL FROM EPISODIC WHERE outcome = "success" ORDER BY confidence DESC LIMIT 5 
 
 ### Browser Playground
 
-Open `playground/index.html` in your browser to parse and validate AQL queries instantly. No installation required.
+**[Launch AQL Playground](https://srirammails.github.io/AQL/playground/)** — Parse and execute AQL queries instantly in your browser. No installation required.
+
+> Click example queries to execute them, or write your own. All operations run locally via WASM.
 
 ### Rust Reference Implementation
 

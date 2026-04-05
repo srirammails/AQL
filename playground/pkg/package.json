@@ -1,0 +1,17 @@
+{
+  "name": "clawdb-wasm",
+  "type": "module",
+  "description": "WASM playground for AQL - Agent Query Language",
+  "version": "0.1.0",
+  "license": "MIT",
+  "files": [
+    "clawdb_wasm_bg.wasm",
+    "clawdb_wasm.js",
+    "clawdb_wasm.d.ts"
+  ],
+  "main": "clawdb_wasm.js",
+  "types": "clawdb_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
