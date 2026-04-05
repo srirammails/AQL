@@ -1,0 +1,72 @@
+# AQL v0.5 Test Suite - §11 REFLECT
+# REFLECT covers multi-source assembly, FROM ALL, THEN clause,
+# and REFLECT as a PIPELINE stage.
+
+suite: REFLECT
+spec_section: "§11"
+total_tests: 4
+bug_refs: [B2, B8, B9]
+
+tests:
+  - id: T11-01
+    name: "REFLECT multi-source"
+    spec_ref: "§11 REFLECT multi-source"
+    seed_required: [e-001, semantic-ai, w-001]
+    query: |
+      REFLECT FROM EPISODIC WHERE campaign = "summer_2026", FROM SEMANTIC WHERE concept = "ai_enterprise_content", FROM WORKING WHERE bid_id = "w-001"
+    expect:
+      success: true
+      type: "reflect"
+      sources_count: 3
+      sources:
+        - memory_type: "EPISODIC"
+          count_gte: 1
+        - memory_type: "SEMANTIC"
+          count_gte: 1
+        - memory_type: "WORKING"
+          count_gte: 1
+
+  - id: T11-02
+    name: "REFLECT FROM ALL (B2)"
+    spec_ref: "B2 REFLECT FROM ALL"
+    seed_required: [w-001, w-002, e-001, e-002]
+    query: |
+      REFLECT FROM ALL WHERE campaign = "summer_2026"
+    expect:
+      success: true
+      type: "reflect"
+      sources:
+        - memory_type: "WORKING"
+          count: 2
+        - memory_type: "EPISODIC"
+          count: 2
+
+  - id: T11-03
+    name: "REFLECT THEN STORE (B8)"
+    spec_ref: "B8 REFLECT THEN STORE"
+    seed_required: [e-001, e-002]
+    query: |
+      REFLECT FROM EPISODIC WHERE campaign = "summer_2026" THEN STORE INTO SEMANTIC (concept = "summer_insight", confidence = 0.80)
+    expect:
+      success: true
+      type: "reflect"
+    verify: |
+      RECALL FROM SEMANTIC WHERE concept = "summer_insight" RETURN concept, confidence
+    verify_expect:
+      count: 1
+      contains:
+        - concept: "summer_insight"
+          confidence: 0.80
+
+  - id: T11-04
+    name: "REFLECT in PIPELINE (B9)"
+    spec_ref: "B9 REFLECT in PIPELINE"
+    seed_required: [e-001, semantic-ai]
+    query: |
+      PIPELINE ctx TIMEOUT 100ms RECALL FROM EPISODIC WHERE campaign = "summer_2026" RETURN bid_id | REFLECT FROM SEMANTIC WHERE concept = "ai_enterprise_content", FROM EPISODIC WHERE campaign = "summer_2026"
+    expect:
+      success: true
+      steps: 2
+      step_2:
+        type: "reflect"
+        sources_count: 2

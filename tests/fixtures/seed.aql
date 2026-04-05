@@ -1,0 +1,124 @@
+-- ══════════════════════════════════════════════════════════
+-- AQL v0.5 CANONICAL SEED DATA
+-- Run ALL statements below before executing any test suite
+-- ══════════════════════════════════════════════════════════
+--
+-- The PROCEDURAL STORE returns a UUID — save it as $PROC_ID
+-- and substitute it wherever tests reference $PROC_ID.
+--
+-- ══════════════════════════════════════════════════════════
+
+-- ┌─────────────────────────────────────────────────────────┐
+-- │ WORKING memory (2 records)                              │
+-- └─────────────────────────────────────────────────────────┘
+
+STORE INTO WORKING (
+  bid_id = "w-001",
+  campaign = "summer_2026",
+  floor_price = 2.5,
+  geo = "IE",
+  priority = 8
+)
+
+STORE INTO WORKING (
+  bid_id = "w-002",
+  campaign = "summer_2026",
+  floor_price = 3.0,
+  geo = "IE",
+  priority = 10
+)
+
+-- ┌─────────────────────────────────────────────────────────┐
+-- │ EPISODIC memory (3 records)                             │
+-- └─────────────────────────────────────────────────────────┘
+
+STORE INTO EPISODIC (
+  bid_id = "e-001",
+  campaign = "summer_2026",
+  won = true,
+  cpm_paid = 3.20,
+  ctr = 0.034,
+  viewability = 0.91
+) SCOPE private NAMESPACE "pubcontext-bidder"
+
+STORE INTO EPISODIC (
+  bid_id = "e-002",
+  campaign = "summer_2026",
+  won = false,
+  cpm_paid = 1.10,
+  ctr = 0.005,
+  viewability = 0.55
+) SCOPE private NAMESPACE "pubcontext-bidder"
+
+STORE INTO EPISODIC (
+  bid_id = "e-003",
+  campaign = "winter_2026",
+  won = true,
+  cpm_paid = 2.85,
+  ctr = 0.021
+) SCOPE shared NAMESPACE "agent-b-ns"
+
+-- ┌─────────────────────────────────────────────────────────┐
+-- │ SEMANTIC memory (2 records)                             │
+-- └─────────────────────────────────────────────────────────┘
+
+STORE INTO SEMANTIC (
+  concept = "ai_enterprise_content",
+  avg_cpm = 3.40,
+  active = true,
+  iab_category = "IAB19"
+) SCOPE private
+
+STORE INTO SEMANTIC (
+  concept = "finance_news",
+  avg_cpm = 4.10,
+  active = true,
+  iab_category = "IAB13"
+) SCOPE private
+
+-- ┌─────────────────────────────────────────────────────────┐
+-- │ PROCEDURAL memory (1 record) — SAVE RETURNED UUID!      │
+-- └─────────────────────────────────────────────────────────┘
+-- The pattern_id returned by this STORE must be saved as $PROC_ID
+-- and used in tests that reference PROCEDURAL records.
+
+STORE INTO PROCEDURAL (
+  pattern = "tech_news_premium",
+  severity = "high",
+  source = "agent",
+  confidence = 0.72,
+  steps = "1. score page 2. bid floor + 18%",
+  success_count = 8,
+  failure_count = 2,
+  variables = "bid_multiplier=1.18,min_floor=2.00,max_cpm=5.00"
+) SCOPE shared
+
+-- ┌─────────────────────────────────────────────────────────┐
+-- │ TOOLS memory (1 record)                                 │
+-- └─────────────────────────────────────────────────────────┘
+
+STORE INTO TOOLS (
+  tool_id = "ctx_scorer_v2",
+  name = "ctx_scorer_v2",
+  category = "bidding",
+  ranking = 0.92,
+  schema = "context_score_v2",
+  task = "scoring",
+  ad_format = "display",
+  description = "Context scoring tool for RTB"
+) SCOPE shared
+
+-- ══════════════════════════════════════════════════════════
+-- SEED DATA SUMMARY
+-- ══════════════════════════════════════════════════════════
+--
+-- Memory Type  | Count | IDs
+-- -------------|-------|--------------------------------
+-- WORKING      | 2     | w-001, w-002
+-- EPISODIC     | 3     | e-001, e-002, e-003
+-- SEMANTIC     | 2     | ai_enterprise_content, finance_news
+-- PROCEDURAL   | 1     | $PROC_ID (UUID)
+-- TOOLS        | 1     | ctx_scorer_v2
+--
+-- Total: 9 records across 5 memory types
+-- ══════════════════════════════════════════════════════════

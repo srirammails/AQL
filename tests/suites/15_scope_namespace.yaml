@@ -1,0 +1,69 @@
+# AQL v0.5 Test Suite - §15 SCOPE and NAMESPACE
+# SCOPE and NAMESPACE isolation tests. Cross-namespace and
+# cross-scope leakage verified for both correct and incorrect values.
+
+suite: SCOPE_NAMESPACE
+spec_section: "§14"
+total_tests: 5
+bug_refs: [B10, B11]
+
+tests:
+  - id: T15-01
+    name: "SCOPE private isolation (B10)"
+    spec_ref: "B10 SCOPE private isolation"
+    seed_required: [e-003]
+    # e-003 has SCOPE shared
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "winter_2026" SCOPE private RETURN bid_id
+    expect:
+      success: true
+      count: 0
+      # e-003 is shared, so excluded from private scope
+
+  - id: T15-02
+    name: "SCOPE shared returns correct (B10)"
+    spec_ref: "B10 SCOPE shared returns correct"
+    seed_required: [e-003]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "winter_2026" SCOPE shared RETURN bid_id
+    expect:
+      success: true
+      count: 1
+      contains:
+        - bid_id: "e-003"
+
+  - id: T15-03
+    name: "NAMESPACE wrong (B11)"
+    spec_ref: "B11 NAMESPACE wrong"
+    seed_required: [e-003]
+    # e-003 is in namespace "agent-b-ns"
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "winter_2026" NAMESPACE "pubcontext-bidder" RETURN bid_id
+    expect:
+      success: true
+      count: 0
+
+  - id: T15-04
+    name: "NAMESPACE correct (B11)"
+    spec_ref: "B11 NAMESPACE correct"
+    seed_required: [e-003]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "winter_2026" NAMESPACE "agent-b-ns" RETURN bid_id
+    expect:
+      success: true
+      count: 1
+      contains:
+        - bid_id: "e-003"
+
+  - id: T15-05
+    name: "SCOPE+NAMESPACE combined"
+    spec_ref: "§14 SCOPE+NAMESPACE combined"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "summer_2026" SCOPE private NAMESPACE "pubcontext-bidder" RETURN bid_id
+    expect:
+      success: true
+      count: 2
+      contains:
+        - bid_id: "e-001"
+        - bid_id: "e-002"

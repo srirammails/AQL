@@ -1,0 +1,32 @@
+# AQL v0.5 Test Suite - §04 LOAD
+# LOAD is restricted to TOOLS memory only.
+# Tests cover ranked selection and validation errors.
+
+suite: LOAD
+spec_section: "§5, §19"
+total_tests: 2
+
+tests:
+  - id: T04-01
+    name: "LOAD TOOLS ranking"
+    spec_ref: "§5 LOAD TOOLS ranking"
+    seed_required: [ctx_scorer_v2]
+    query: |
+      LOAD FROM TOOLS WHERE ranking > 0.5 ORDER BY ranking DESC RETURN tool_id, name, ranking, schema
+    expect:
+      success: true
+      count: 1
+      contains:
+        - tool_id: "ctx_scorer_v2"
+          ranking: 0.92
+          schema: "context_score_v2"
+
+  - id: T04-02
+    name: "LOAD invalid on EPISODIC"
+    spec_ref: "§19 LOAD only valid on TOOLS"
+    seed_required: []
+    query: |
+      LOAD FROM EPISODIC WHERE campaign = "summer_2026" RETURN bid_id
+    expect:
+      success: false
+      error_contains: "LOAD"

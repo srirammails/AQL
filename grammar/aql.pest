@@ -1,0 +1,303 @@
+// AQL Grammar - Agent Query Language v0.5
+//
+// AQL encodes agentic intent rather than database mechanics.
+// Core design: AQL expresses what the agent wants. ADB handles how memory works.
+
+// ============================================================================
+// Top-level rules
+// ============================================================================
+
+aql = { SOI ~ statement ~ EOI }
+
+statement = {
+    pipeline_stmt
+  | reflect_stmt
+  | scan_stmt
+  | recall_stmt
+  | lookup_stmt
+  | load_stmt
+  | store_stmt
+  | update_stmt
+  | forget_stmt
+  | link_stmt
+}
+
+// ============================================================================
+// PIPELINE - Chained queries with time budget
+// ============================================================================
+
+// PIPELINE bid_decision TIMEOUT 80ms
+//   LOAD FROM TOOLS WHERE task = "bidding"
+//   | LOOKUP FROM SEMANTIC KEY url = {url}
+// Anonymous pipeline also supported:
+//   PIPELINE SCAN FROM WORKING | RECALL FROM EPISODIC WHERE pod = "test"
+pipeline_stmt = {
+    ^"PIPELINE" ~ pipeline_name? ~ timeout_mod ~
+    pipeline_stage ~ ("|" ~ pipeline_stage)*
+}
+
+// Pipeline name must not be a reserved keyword
+pipeline_name = { !pipeline_reserved_keyword ~ identifier }
+pipeline_reserved_keyword = { ^"SCAN" | ^"RECALL" | ^"LOOKUP" | ^"LOAD" | ^"REFLECT" | ^"TIMEOUT" }
+
+pipeline_stage = {
+    scan_stmt
+  | recall_stmt
+  | lookup_stmt
+  | load_stmt
+  | reflect_stmt
+}
+
+// ============================================================================
+// REFLECT - Context assembly from multiple sources
+// ============================================================================
+
+// REFLECT FROM EPISODIC WHERE incident_id = {current},
+//          FROM PROCEDURAL WHERE pattern_id = {matched}
+//   WITH LINKS TYPE "applied_to"
+//   THEN STORE INTO PROCEDURAL
+reflect_stmt = {
+    ^"REFLECT" ~ reflect_source ~ ("," ~ reflect_source)* ~
+    with_links_mod? ~ follow_links_mod? ~ then_clause?
+}
+
+reflect_source = {
+    ^"FROM" ~ memory_type ~ predicate?
+}
+
+then_clause = {
+    ^"THEN" ~ (store_stmt | update_stmt)
+}
+
+// ============================================================================
+// Read Operations
+// ============================================================================
+
+// SCAN FROM WORKING WINDOW LAST 10
+scan_stmt = {
+    ^"SCAN" ~ ^"FROM" ~ ^"WORKING" ~ window_mod? ~ modifier*
+}
+
+// RECALL FROM EPISODIC WHERE pod = "payments" MIN_CONFIDENCE 0.7
+recall_stmt = {
+    ^"RECALL" ~ ^"FROM" ~ memory_type ~ predicate ~ modifier*
+}
+
+// LOOKUP FROM PROCEDURAL PATTERN $log_events THRESHOLD 0.7
+lookup_stmt = {
+    ^"LOOKUP" ~ ^"FROM" ~ memory_type ~ predicate ~ modifier*
+}
+
+// LOAD FROM TOOLS WHERE task = "bidding" ORDER BY ranking DESC LIMIT 3
+load_stmt = {
+    ^"LOAD" ~ ^"FROM" ~ ^"TOOLS" ~ predicate ~ modifier*
+}
+
+// ============================================================================
+// Write Operations
+// ============================================================================
+
+// STORE INTO EPISODIC (incident_id = "inc-001", pod = "payments") TTL 7d
+store_stmt = {
+    ^"STORE" ~ ^"INTO" ~ memory_type ~ payload ~ modifier*
+}
+
+// UPDATE INTO PROCEDURAL WHERE pattern_id = "oom-fix" (confidence = 0.9)
+update_stmt = {
+    ^"UPDATE" ~ ^"INTO" ~ memory_type ~ ^"WHERE" ~ condition_list ~ payload ~ modifier*
+}
+
+// FORGET FROM WORKING WHERE temp = "true"
+forget_stmt = {
+    ^"FORGET" ~ ^"FROM" ~ memory_type ~ ^"WHERE" ~ condition_list ~ modifier*
+}
+
+// ============================================================================
+// LINK - Create ontology edges
+// ============================================================================
+
+// LINK FROM PROCEDURAL WHERE pattern_id = "oom-fix"
+//   TO EPISODIC WHERE incident_id = "inc-001"
+//   TYPE "applied_to" WEIGHT 0.95
+link_stmt = {
+    ^"LINK" ~ ^"FROM" ~ memory_type ~ ^"WHERE" ~ condition_list ~
+    ^"TO" ~ memory_type ~ ^"WHERE" ~ condition_list ~
+    ^"TYPE" ~ string_literal ~ (^"WEIGHT" ~ float_literal)?
+}
+
+// ============================================================================
+// Predicates
+// ============================================================================
+
+predicate = {
+    where_pred
+  | key_pred
+  | like_pred
+  | pattern_pred
+  | all_pred
+}
+
+where_pred = { ^"WHERE" ~ condition_list }
+key_pred = { ^"KEY" ~ identifier ~ "=" ~ value }
+like_pred = { ^"LIKE" ~ variable }
+pattern_pred = { ^"PATTERN" ~ variable ~ (^"THRESHOLD" ~ float_literal)? }
+all_pred = { ^"ALL" }
+
+// ============================================================================
+// Conditions
+// ============================================================================
+
+// Top-level condition list: atoms joined by AND/OR
+condition_list = { condition_atom ~ (logical_op ~ condition_atom)* }
+
+// A condition atom is either a parenthesized group or a simple condition
+condition_atom = { paren_condition | simple_condition }
+
+// Parenthesized condition group - allows (A OR B) syntax
+paren_condition = { "(" ~ condition_list ~ ")" }
+
+// Simple condition: field op value
+simple_condition = { field_path ~ operator ~ value }
+
+// Logical operators for combining conditions
+logical_op = { ^"AND" | ^"OR" }
+
+operator = {
+    ">=" | "<=" | "!=" | "<>" | "=" | ">" | "<"
+  | ^"CONTAINS" | ^"STARTS_WITH" | ^"ENDS_WITH" | ^"IN"
+}
+
+// ============================================================================
+// Payload (for STORE/UPDATE)
+// ============================================================================
+
+payload = { "(" ~ field_assignment ~ ("," ~ field_assignment)* ~ ")" }
+
+field_assignment = { field_path ~ "=" ~ value }
+
+// ============================================================================
+// Modifiers
+// ============================================================================
+
+modifier = {
+    limit_mod
+  | order_mod
+  | return_mod
+  | timeout_mod
+  | min_confidence_mod
+  | scope_mod
+  | namespace_mod
+  | ttl_mod
+  | aggregate_mod
+  | having_mod
+  | with_links_mod
+  | follow_links_mod
+  | window_mod
+}
+
+limit_mod = { ^"LIMIT" ~ integer_literal }
+
+order_mod = { ^"ORDER" ~ ^"BY" ~ field_path ~ order_direction? }
+
+order_direction = { ^"ASC" | ^"DESC" }
+
+return_mod = { ^"RETURN" ~ return_field ~ ("," ~ return_field)* }
+
+return_field = { "*" | field_path }
+
+timeout_mod = { ^"TIMEOUT" ~ duration_literal }
+
+min_confidence_mod = { ^"MIN_CONFIDENCE" ~ float_literal }
+
+scope_mod = { ^"SCOPE" ~ scope_value }
+
+scope_value = { ^"private" | ^"shared" | ^"cluster" }
+
+namespace_mod = { ^"NAMESPACE" ~ string_literal }
+
+ttl_mod = { ^"TTL" ~ duration_literal }
+
+// AGGREGATE COUNT(*) AS uses, AVG(ctr) AS avg_ctr
+aggregate_mod = { ^"AGGREGATE" ~ agg_func ~ ("," ~ agg_func)* }
+
+agg_func = {
+    agg_func_name ~ "(" ~ (field_path | "*") ~ ")" ~ agg_alias?
+}
+
+agg_alias = { ^"AS" ~ identifier }
+
+agg_func_name = { ^"COUNT" | ^"AVG" | ^"SUM" | ^"MIN" | ^"MAX" }
+
+// HAVING uses > 10 AND avg_ctr < 0.01
+having_mod = { ^"HAVING" ~ condition_list }
+
+// WITH LINKS ALL | WITH LINKS TYPE "applied_to"
+with_links_mod = { ^"WITH" ~ ^"LINKS" ~ (^"ALL" | (^"TYPE" ~ string_literal)) }
+
+// FOLLOW LINKS TYPE "triggers"
+follow_links_mod = { ^"FOLLOW" ~ ^"LINKS" ~ ^"TYPE" ~ string_literal ~ (^"DEPTH" ~ integer_literal)? }
+
+// WINDOW LAST 10 | WINDOW LAST 30s | WINDOW TOP 3 BY attention_weight | WINDOW SINCE event_id = "inc-001"
+window_mod = {
+    ^"WINDOW" ~ (
+        (^"LAST" ~ (duration_literal | integer_literal))
+      | (^"TOP" ~ integer_literal ~ ^"BY" ~ field_path)
+      | (^"SINCE" ~ simple_condition)
+    )
+}
+
+// ============================================================================
+// Memory Types
+// ============================================================================
+
+memory_type = {
+    ^"WORKING" | ^"TOOLS" | ^"PROCEDURAL" | ^"SEMANTIC" | ^"EPISODIC" | ^"ALL"
+}
+
+// ============================================================================
+// Values
+// ============================================================================
+
+value = {
+    null_literal
+  | bool_literal
+  | float_literal
+  | integer_literal
+  | string_literal
+  | variable
+  | array_literal
+}
+
+null_literal = { ^"null" | ^"NULL" }
+bool_literal = { ^"true" | ^"false" | ^"TRUE" | ^"FALSE" }
+
+integer_literal = @{ "-"? ~ ASCII_DIGIT+ }
+
+float_literal = @{ "-"? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
+
+string_literal = @{ "\"" ~ string_inner ~ "\"" }
+string_inner = @{ (!("\"" | "\\") ~ ANY | "\\" ~ ANY)* }
+
+variable = @{ "{" ~ identifier ~ "}" | "$" ~ identifier }
+
+array_literal = { "[" ~ (value ~ ("," ~ value)*)? ~ "]" }
+
+duration_literal = @{ ASCII_DIGIT+ ~ duration_unit }
+duration_unit = { "ms" | "s" | "m" | "h" | "d" }
+
+// ============================================================================
+// Identifiers and Field Paths
+// ============================================================================
+
+// Simple identifier (no dots)
+identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_" | "-")* }
+
+// Dotted field path for accessing nested fields (e.g., metadata.pod)
+field_path = @{ identifier ~ ("." ~ identifier)* }
+
+// ============================================================================
+// Whitespace and Comments
+// ============================================================================
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT = _{ "--" ~ (!"\n" ~ ANY)* }

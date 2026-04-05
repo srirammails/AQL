@@ -1,0 +1,36 @@
+# AQL v0.5 Test Suite - §09 WITH LINKS
+# WITH LINKS ALL and TYPE filter verify the links[] payload
+# is present in responses.
+
+suite: WITH_LINKS
+spec_section: "§10"
+total_tests: 2
+bug_refs: [B7]
+depends_on: [T08-01, T08-02]
+
+tests:
+  - id: T09-01
+    name: "WITH LINKS ALL (B7)"
+    spec_ref: "B7 WITH LINKS ALL"
+    seed_required: [$PROC_ID]
+    # After T08-02 has created a link
+    query: |
+      LOOKUP FROM PROCEDURAL WHERE pattern = "tech_news_premium" WITH LINKS ALL RETURN pattern, links
+    expect:
+      success: true
+      count: 1
+      links_present: true
+      links_contains:
+        - link_type: "applied_to"
+          to_type: "EPISODIC"
+
+  - id: T09-02
+    name: "WITH LINKS TYPE filter"
+    spec_ref: "§10 WITH LINKS TYPE filter"
+    seed_required: [$PROC_ID]
+    query: |
+      LOOKUP FROM PROCEDURAL WHERE pattern = "tech_news_premium" WITH LINKS TYPE "applied_to" RETURN pattern
+    expect:
+      success: true
+      count: 1
+      links_type_only: "applied_to"

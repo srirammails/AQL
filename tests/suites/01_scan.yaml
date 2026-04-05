@@ -1,0 +1,67 @@
+# AQL v0.5 Test Suite - §01 SCAN
+# SCAN is restricted to WORKING memory only.
+# Tests cover all 4 WINDOW variants and validation rules.
+
+suite: SCAN
+spec_section: "§5, §6, §19"
+total_tests: 5
+
+tests:
+  - id: T01-01
+    name: "SCAN WINDOW LAST N"
+    spec_ref: "§5 SCAN WINDOW LAST N"
+    seed_required: [w-001, w-002]
+    query: |
+      SCAN FROM WORKING WINDOW LAST 10 RETURN bid_id, campaign
+    expect:
+      success: true
+      count: 2
+      contains:
+        - bid_id: "w-001"
+        - bid_id: "w-002"
+
+  - id: T01-02
+    name: "SCAN WINDOW LAST duration"
+    spec_ref: "§6 WINDOW LAST duration"
+    seed_required: [w-001, w-002]
+    query: |
+      SCAN FROM WORKING WINDOW LAST 30s RETURN bid_id
+    expect:
+      success: true
+      count_gte: 0
+      # Records created within last 30 seconds should be returned
+
+  - id: T01-03
+    name: "SCAN WINDOW TOP BY field"
+    spec_ref: "§6 WINDOW TOP BY field"
+    seed_required: [w-001, w-002]
+    query: |
+      SCAN FROM WORKING WINDOW TOP 1 BY priority RETURN bid_id, priority
+    expect:
+      success: true
+      count: 1
+      contains:
+        - bid_id: "w-002"
+          priority: 10
+
+  - id: T01-04
+    name: "SCAN WINDOW SINCE key_expr"
+    spec_ref: "§6 WINDOW SINCE key_expr"
+    seed_required: [w-001]
+    query: |
+      SCAN FROM WORKING WINDOW SINCE bid_id = "w-001" RETURN bid_id
+    expect:
+      success: true
+      count_gte: 1
+      contains:
+        - bid_id: "w-001"
+
+  - id: T01-05
+    name: "SCAN only valid on WORKING"
+    spec_ref: "§19 Validation - SCAN only WORKING"
+    seed_required: []
+    query: |
+      SCAN FROM EPISODIC WINDOW LAST 5 RETURN bid_id
+    expect:
+      success: false
+      error_contains: "SCAN"

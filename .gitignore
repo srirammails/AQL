@@ -1,1 +1,23 @@
+# AI
 .ai/
+
+# Rust
+target/
+Cargo.lock
+
+# WASM build artifacts (keep pkg/ for playground)
+*.wasm.map
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+*.log

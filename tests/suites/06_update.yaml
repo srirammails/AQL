@@ -1,0 +1,121 @@
+# AQL v0.5 Test Suite - §06 UPDATE INTO
+# UPDATE covers all types, PROCEDURAL typed fields,
+# version increment, TTL race condition, and non-existent records.
+
+suite: UPDATE
+spec_section: "§7"
+total_tests: 10
+bug_refs: [B21, B22, B23, B24, B25, B26]
+
+tests:
+  - id: T06-01
+    name: "UPDATE EPISODIC additive"
+    spec_ref: "§7 UPDATE EPISODIC additive"
+    seed_required: [e-001]
+    query: |
+      UPDATE INTO EPISODIC WHERE bid_id = "e-001" (brand_lift = 0.042, post_view_conv = true)
+    expect:
+      success: true
+      affected_count: 1
+    verify: |
+      RECALL FROM EPISODIC WHERE bid_id = "e-001" RETURN bid_id, brand_lift, post_view_conv
+    verify_expect:
+      contains:
+        - brand_lift: 0.042
+          post_view_conv: true
+
+  - id: T06-02
+    name: "UPDATE PROCEDURAL confidence"
+    spec_ref: "§7 UPDATE PROCEDURAL confidence"
+    seed_required: [$PROC_ID]
+    query: |
+      UPDATE INTO PROCEDURAL WHERE pattern = "tech_news_premium" (confidence = 0.85, success_count = 12)
+    expect:
+      success: true
+      affected_count: 1
+
+  - id: T06-03
+    name: "PROCEDURAL steps writable (B24)"
+    spec_ref: "B24 PROCEDURAL steps writable"
+    seed_required: [$PROC_ID]
+    query: |
+      UPDATE INTO PROCEDURAL WHERE pattern = "tech_news_premium" (steps = "1. updated step 2. new step")
+    expect:
+      success: true
+      affected_count: 1
+
+  - id: T06-04
+    name: "PROCEDURAL variables writable (B21)"
+    spec_ref: "B21 PROCEDURAL variables writable"
+    seed_required: [$PROC_ID]
+    query: |
+      UPDATE INTO PROCEDURAL WHERE pattern = "tech_news_premium" (variables = "bid_multiplier=1.25,min_floor=2.50,max_cpm=6.00")
+    expect:
+      success: true
+      affected_count: 1
+
+  - id: T06-05
+    name: "PROCEDURAL success/failure counts (B25)"
+    spec_ref: "B25 PROCEDURAL success/failure"
+    seed_required: [$PROC_ID]
+    query: |
+      UPDATE INTO PROCEDURAL WHERE pattern = "tech_news_premium" (success_count = 15, failure_count = 3)
+    expect:
+      success: true
+      affected_count: 1
+
+  - id: T06-06
+    name: "PROCEDURAL version increment (B26)"
+    spec_ref: "B26 PROCEDURAL version increment"
+    seed_required: [$PROC_ID]
+    # After T06-02
+    query: |
+      RECALL FROM PROCEDURAL WHERE pattern = "tech_news_premium" RETURN pattern, version
+    expect:
+      success: true
+      count: 1
+      version_gte: 2
+
+  - id: T06-07
+    name: "UPDATE/TTL race condition (B22)"
+    spec_ref: "B22 UPDATE/TTL race condition"
+    seed_required: []
+    setup: |
+      STORE INTO WORKING (race_key = "r1") TTL 500ms
+    wait_ms: 600
+    query: |
+      UPDATE INTO WORKING WHERE race_key = "r1" (status = "done")
+    expect:
+      success: true
+      affected_count: 0
+
+  - id: T06-08
+    name: "UPDATE SEMANTIC"
+    spec_ref: "§7 UPDATE SEMANTIC"
+    seed_required: [semantic-ai]
+    query: |
+      UPDATE INTO SEMANTIC WHERE concept = "ai_enterprise_content" (avg_cpm = 3.60)
+    expect:
+      success: true
+      affected_count: 1
+
+  - id: T06-09
+    name: "Int literal vs stored float (B23)"
+    spec_ref: "B23 int literal vs stored float"
+    seed_required: [e-001, e-002, e-003]
+    query: |
+      RECALL FROM EPISODIC WHERE cpm_paid > 2 RETURN bid_id, cpm_paid
+    expect:
+      success: true
+      count: 2
+      # e-001 (3.2) and e-003 (2.85) should match > 2
+
+  - id: T06-10
+    name: "UPDATE non-existent"
+    spec_ref: "§7 UPDATE non-existent"
+    seed_required: []
+    query: |
+      UPDATE INTO EPISODIC WHERE bid_id = "ghost-99" (won = false)
+    expect:
+      success: true
+      affected_count: 0

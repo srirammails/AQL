@@ -1,0 +1,67 @@
+# AQL v0.5 Test Suite - §03 LOOKUP
+# LOOKUP is valid on SEMANTIC, PROCEDURAL, and TOOLS only.
+# Tests cover KEY and WHERE predicates plus validation errors.
+
+suite: LOOKUP
+spec_section: "§5, §19"
+total_tests: 5
+
+tests:
+  - id: T03-01
+    name: "LOOKUP SEMANTIC KEY"
+    spec_ref: "§5 LOOKUP SEMANTIC KEY"
+    seed_required: [semantic-ai]
+    query: |
+      LOOKUP FROM SEMANTIC KEY concept = "ai_enterprise_content" RETURN concept, avg_cpm, iab_category
+    expect:
+      success: true
+      count: 1
+      contains:
+        - concept: "ai_enterprise_content"
+          avg_cpm: 3.40
+          iab_category: "IAB19"
+
+  - id: T03-02
+    name: "LOOKUP SEMANTIC WHERE"
+    spec_ref: "§5 LOOKUP SEMANTIC WHERE"
+    seed_required: [semantic-ai, semantic-finance]
+    query: |
+      LOOKUP FROM SEMANTIC WHERE avg_cpm > 3 RETURN concept, avg_cpm
+    expect:
+      success: true
+      count: 2
+      contains:
+        - concept: "ai_enterprise_content"
+        - concept: "finance_news"
+
+  - id: T03-03
+    name: "LOOKUP PROCEDURAL WHERE"
+    spec_ref: "§5 LOOKUP PROCEDURAL WHERE"
+    seed_required: [$PROC_ID]
+    query: |
+      LOOKUP FROM PROCEDURAL WHERE pattern = "tech_news_premium" RETURN pattern, confidence, steps
+    expect:
+      success: true
+      count: 1
+      contains:
+        - pattern: "tech_news_premium"
+
+  - id: T03-04
+    name: "LOOKUP invalid on WORKING"
+    spec_ref: "§19 LOOKUP invalid WORKING"
+    seed_required: []
+    query: |
+      LOOKUP FROM WORKING KEY bid_id = "w-001" RETURN bid_id
+    expect:
+      success: false
+      error_contains: "LOOKUP"
+
+  - id: T03-05
+    name: "LOOKUP invalid on EPISODIC"
+    spec_ref: "§19 LOOKUP invalid EPISODIC"
+    seed_required: []
+    query: |
+      LOOKUP FROM EPISODIC WHERE bid_id = "e-001" RETURN bid_id
+    expect:
+      success: false
+      error_contains: "LOOKUP"

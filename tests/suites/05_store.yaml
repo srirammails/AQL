@@ -1,0 +1,101 @@
+# AQL v0.5 Test Suite - §05 STORE INTO
+# STORE covers all 5 memory types, TTL (all time units),
+# SCOPE, NAMESPACE, and validation errors.
+
+suite: STORE
+spec_section: "§7, §14, §19"
+total_tests: 8
+
+tests:
+  - id: T05-01
+    name: "STORE WORKING TTL"
+    spec_ref: "§7 STORE WORKING TTL"
+    seed_required: []
+    query: |
+      STORE INTO WORKING (bid_id = "test-w", event = "store_test") TTL 60s
+    expect:
+      success: true
+      stored:
+        ttl_ms: 60000
+        version: 1
+
+  - id: T05-02
+    name: "STORE EPISODIC SCOPE NAMESPACE"
+    spec_ref: "§7 STORE EPISODIC SCOPE NAMESPACE"
+    seed_required: []
+    query: |
+      STORE INTO EPISODIC (bid_id = "test-e", campaign = "test", won = true, cpm_paid = 2.0) SCOPE private NAMESPACE "test-ns"
+    expect:
+      success: true
+      stored:
+        namespace: "test-ns"
+        scope: "private"
+
+  - id: T05-03
+    name: "STORE SEMANTIC"
+    spec_ref: "§7 STORE SEMANTIC"
+    seed_required: []
+    query: |
+      STORE INTO SEMANTIC (concept = "test_concept", avg_cpm = 2.0, active = false) SCOPE private
+    expect:
+      success: true
+      stored:
+        concept: "test_concept"
+
+  - id: T05-04
+    name: "STORE PROCEDURAL"
+    spec_ref: "§7 STORE PROCEDURAL"
+    seed_required: []
+    query: |
+      STORE INTO PROCEDURAL (pattern = "test_p", severity = "low", confidence = 0.5, steps = "1. test", success_count = 0, failure_count = 0, variables = "k=v") SCOPE shared
+    expect:
+      success: true
+      stored:
+        pattern: "test_p"
+        version: 1
+        # pattern_id is auto-generated UUID
+
+  - id: T05-05
+    name: "STORE TOOLS"
+    spec_ref: "§7 STORE TOOLS"
+    seed_required: []
+    query: |
+      STORE INTO TOOLS (tool_id = "test_tool", name = "test_tool", category = "test", ranking = 0.5, schema = "test_schema") SCOPE shared
+    expect:
+      success: true
+      stored:
+        tool_id: "test_tool"
+
+  - id: T05-06
+    name: "TTL 500ms expiry"
+    spec_ref: "§14 TTL expiry"
+    seed_required: []
+    setup: |
+      STORE INTO WORKING (ttl_key = "expire_me") TTL 500ms
+    wait_ms: 600
+    query: |
+      RECALL FROM WORKING WHERE ttl_key = "expire_me" RETURN ttl_key
+    expect:
+      success: true
+      count: 0
+
+  - id: T05-07
+    name: "TTL units ms/s/m/h/d"
+    spec_ref: "§14 TTL units"
+    seed_required: []
+    query: |
+      STORE INTO WORKING (ttl_key = "ttl_h") TTL 1h
+    expect:
+      success: true
+      stored:
+        ttl_ms: 3600000
+
+  - id: T05-08
+    name: "STORE INTO ALL invalid"
+    spec_ref: "§19 ALL not valid for writes"
+    seed_required: []
+    query: |
+      STORE INTO ALL (test = "invalid")
+    expect:
+      success: false
+      error_contains: "ALL"

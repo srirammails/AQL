@@ -1,0 +1,258 @@
+# AQL v0.5 Test Suite - §02 RECALL
+# RECALL covers all 6 comparators, all types, ORDER BY/LIMIT, FROM ALL,
+# and all OR condition forms including bare OR, (A OR B), (A OR B) AND C,
+# and A AND (B OR C) precedence.
+
+suite: RECALL
+spec_section: "§5, §6, §14"
+total_tests: 20
+
+tests:
+  - id: T02-01
+    name: "WHERE = string"
+    spec_ref: "§6 WHERE = string"
+    seed_required: [e-001]
+    query: |
+      RECALL FROM EPISODIC WHERE bid_id = "e-001" RETURN bid_id, campaign
+    expect:
+      success: true
+      count: 1
+      contains:
+        - bid_id: "e-001"
+          campaign: "summer_2026"
+
+  - id: T02-02
+    name: "Comparator !="
+    spec_ref: "§6 comparator !="
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE won != true RETURN bid_id, won
+    expect:
+      success: true
+      count: 1
+      contains:
+        - bid_id: "e-002"
+          won: false
+
+  - id: T02-03
+    name: "Comparator > int vs float"
+    spec_ref: "§6 comparator > int vs float"
+    seed_required: [e-001, e-002, e-003]
+    query: |
+      RECALL FROM EPISODIC WHERE cpm_paid > 2 RETURN bid_id, cpm_paid
+    expect:
+      success: true
+      count: 2
+      contains:
+        - bid_id: "e-001"
+        - bid_id: "e-003"
+
+  - id: T02-04
+    name: "Comparator < int vs float"
+    spec_ref: "§6 comparator < int vs float"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE cpm_paid < 2 RETURN bid_id, cpm_paid
+    expect:
+      success: true
+      count: 1
+      contains:
+        - bid_id: "e-002"
+
+  - id: T02-05
+    name: "Comparator >= float"
+    spec_ref: "§6 comparator >= float"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE cpm_paid >= 3.20 RETURN bid_id, cpm_paid
+    expect:
+      success: true
+      count: 1
+      contains:
+        - bid_id: "e-001"
+
+  - id: T02-06
+    name: "Comparator <= float"
+    spec_ref: "§6 comparator <= float"
+    seed_required: [e-002, e-003]
+    query: |
+      RECALL FROM EPISODIC WHERE cpm_paid <= 2.85 RETURN bid_id, cpm_paid
+    expect:
+      success: true
+      count: 2
+      contains:
+        - bid_id: "e-002"
+        - bid_id: "e-003"
+
+  - id: T02-07
+    name: "AND condition"
+    spec_ref: "§6 AND condition"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "summer_2026" AND won = true RETURN bid_id
+    expect:
+      success: true
+      count: 1
+      contains:
+        - bid_id: "e-001"
+
+  - id: T02-08
+    name: "3-clause AND"
+    spec_ref: "§6 3-clause AND"
+    seed_required: [e-001]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "summer_2026" AND won = true AND cpm_paid > 3.0 RETURN bid_id, cpm_paid
+    expect:
+      success: true
+      count: 1
+      contains:
+        - bid_id: "e-001"
+
+  - id: T02-09
+    name: "OR bare"
+    spec_ref: "§6 OR bare"
+    seed_required: [e-001, e-002, e-003]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "summer_2026" OR campaign = "winter_2026" RETURN bid_id, campaign
+    expect:
+      success: true
+      count: 3
+      contains:
+        - bid_id: "e-001"
+        - bid_id: "e-002"
+        - bid_id: "e-003"
+
+  - id: T02-10
+    name: "(A OR B) parenthesised"
+    spec_ref: "§6 (A OR B) parenthesised"
+    seed_required: [e-001, e-002, e-003]
+    query: |
+      RECALL FROM EPISODIC WHERE (campaign = "summer_2026" OR campaign = "winter_2026") RETURN bid_id, campaign
+    expect:
+      success: true
+      count: 3
+
+  - id: T02-11
+    name: "(A OR B) AND C"
+    spec_ref: "§6 (A OR B) AND C"
+    seed_required: [e-001, e-002, e-003]
+    query: |
+      RECALL FROM EPISODIC WHERE (campaign = "summer_2026" OR campaign = "winter_2026") AND won = true RETURN bid_id, won
+    expect:
+      success: true
+      count: 2
+      contains:
+        - bid_id: "e-001"
+        - bid_id: "e-003"
+
+  - id: T02-12
+    name: "A AND (B OR C)"
+    spec_ref: "§6 A AND (B OR C)"
+    seed_required: [e-001, e-002, e-003]
+    query: |
+      RECALL FROM EPISODIC WHERE won = true AND (cpm_paid > 3.0 OR campaign = "winter_2026") RETURN bid_id, won, cpm_paid
+    expect:
+      success: true
+      count: 2
+      contains:
+        - bid_id: "e-001"
+        - bid_id: "e-003"
+
+  - id: T02-13
+    name: "(A OR B) AND (C OR D)"
+    spec_ref: "§6 (A OR B) AND (C OR D)"
+    seed_required: [e-001, e-002, e-003]
+    query: |
+      RECALL FROM EPISODIC WHERE (won = true OR won = false) AND (cpm_paid > 2.0 OR cpm_paid < 2.0) RETURN bid_id
+    expect:
+      success: true
+      count: 3
+
+  - id: T02-14
+    name: "ORDER BY ASC"
+    spec_ref: "§14 ORDER BY ASC"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "summer_2026" ORDER BY cpm_paid ASC RETURN bid_id, cpm_paid
+    expect:
+      success: true
+      count: 2
+      ordered:
+        - bid_id: "e-002"
+        - bid_id: "e-001"
+
+  - id: T02-15
+    name: "ORDER BY DESC LIMIT"
+    spec_ref: "§14 ORDER BY DESC LIMIT"
+    seed_required: [e-001, e-002, e-003]
+    query: |
+      RECALL FROM EPISODIC ORDER BY cpm_paid DESC LIMIT 1 RETURN bid_id, cpm_paid
+    expect:
+      success: true
+      count: 1
+      contains:
+        - bid_id: "e-001"
+
+  - id: T02-16
+    name: "RECALL SEMANTIC"
+    spec_ref: "§5 RECALL SEMANTIC"
+    seed_required: [semantic-ai, semantic-finance]
+    query: |
+      RECALL FROM SEMANTIC WHERE active = true RETURN concept, avg_cpm, iab_category
+    expect:
+      success: true
+      count: 2
+      contains:
+        - concept: "ai_enterprise_content"
+        - concept: "finance_news"
+
+  - id: T02-17
+    name: "RECALL PROCEDURAL"
+    spec_ref: "§5 RECALL PROCEDURAL"
+    seed_required: [$PROC_ID]
+    query: |
+      RECALL FROM PROCEDURAL WHERE pattern = "tech_news_premium" RETURN pattern, confidence, steps, success_count, failure_count, variables
+    expect:
+      success: true
+      count: 1
+      contains:
+        - pattern: "tech_news_premium"
+          confidence: 0.72
+
+  - id: T02-18
+    name: "RECALL WORKING"
+    spec_ref: "§5 RECALL WORKING"
+    seed_required: [w-001, w-002]
+    query: |
+      RECALL FROM WORKING WHERE geo = "IE" RETURN bid_id, geo, floor_price
+    expect:
+      success: true
+      count: 2
+      contains:
+        - bid_id: "w-001"
+        - bid_id: "w-002"
+
+  - id: T02-19
+    name: "RECALL TOOLS"
+    spec_ref: "§5 RECALL TOOLS"
+    seed_required: [ctx_scorer_v2]
+    query: |
+      RECALL FROM TOOLS WHERE ranking > 0.5 RETURN tool_id, name, category, ranking
+    expect:
+      success: true
+      count: 1
+      contains:
+        - tool_id: "ctx_scorer_v2"
+          ranking: 0.92
+
+  - id: T02-20
+    name: "RECALL FROM ALL"
+    spec_ref: "§5 RECALL FROM ALL"
+    seed_required: [e-001]
+    query: |
+      RECALL FROM ALL WHERE bid_id = "e-001" RETURN bid_id, campaign
+    expect:
+      success: true
+      count_gte: 1
+      contains:
+        - bid_id: "e-001"

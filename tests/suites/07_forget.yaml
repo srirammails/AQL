@@ -1,0 +1,77 @@
+# AQL v0.5 Test Suite - §07 FORGET FROM
+# FORGET covers all types, idempotency, FORGET FROM ALL WHERE,
+# and validation rules requiring a WHERE predicate.
+
+suite: FORGET
+spec_section: "§8, §19"
+total_tests: 6
+bug_refs: [B15]
+
+tests:
+  - id: T07-01
+    name: "FORGET WORKING WHERE"
+    spec_ref: "§8 FORGET WORKING WHERE"
+    seed_required: []
+    setup: |
+      STORE INTO WORKING (bid_id = "temp-w", event = "forget_test")
+    query: |
+      FORGET FROM WORKING WHERE bid_id = "temp-w"
+    expect:
+      success: true
+      affected_count: 1
+
+  - id: T07-02
+    name: "FORGET idempotent"
+    spec_ref: "§8 FORGET idempotent"
+    seed_required: []
+    # After T07-01 deleted the record
+    query: |
+      FORGET FROM WORKING WHERE bid_id = "temp-w"
+    expect:
+      success: true
+      affected_count: 0
+
+  - id: T07-03
+    name: "FORGET EPISODIC WHERE"
+    spec_ref: "§8 FORGET EPISODIC WHERE"
+    seed_required: []
+    setup: |
+      STORE INTO EPISODIC (bid_id = "temp-e", campaign = "forget_test", won = false, cpm_paid = 0.5) SCOPE private
+    query: |
+      FORGET FROM EPISODIC WHERE bid_id = "temp-e"
+    expect:
+      success: true
+      affected_count: 1
+
+  - id: T07-04
+    name: "FORGET FROM ALL WHERE (B15)"
+    spec_ref: "B15 FORGET FROM ALL WHERE"
+    seed_required: []
+    setup: |
+      STORE INTO WORKING (campaign = "sweep_test", bid_id = "sweep-w")
+      STORE INTO EPISODIC (campaign = "sweep_test", bid_id = "sweep-e", won = false, cpm_paid = 0.1) SCOPE private
+    query: |
+      FORGET FROM ALL WHERE campaign = "sweep_test"
+    expect:
+      success: true
+      affected_count: 2
+
+  - id: T07-05
+    name: "FORGET predicate required"
+    spec_ref: "§8 FORGET predicate required"
+    seed_required: []
+    query: |
+      FORGET FROM WORKING
+    expect:
+      success: false
+      error_contains: "predicate"
+
+  - id: T07-06
+    name: "FORGET FROM ALL no WHERE"
+    spec_ref: "§19 FORGET FROM ALL no WHERE"
+    seed_required: []
+    query: |
+      FORGET FROM ALL
+    expect:
+      success: false
+      error_contains: "WHERE"

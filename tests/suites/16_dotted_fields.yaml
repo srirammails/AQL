@@ -1,0 +1,59 @@
+# AQL v0.5 Test Suite - §16 Dotted Field Paths
+# Tests metadata.namespace, metadata.scope, metadata.version
+# in WHERE filter position and RETURN projection.
+
+suite: DOTTED_FIELDS
+spec_section: "§6"
+total_tests: 4
+bug_refs: [B20]
+
+tests:
+  - id: T16-01
+    name: "WHERE metadata.namespace (B20)"
+    spec_ref: "B20 WHERE metadata.namespace"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE metadata.namespace = "pubcontext-bidder" RETURN bid_id
+    expect:
+      success: true
+      count_gte: 2
+      contains:
+        - bid_id: "e-001"
+        - bid_id: "e-002"
+
+  - id: T16-02
+    name: "WHERE metadata.scope (B20)"
+    spec_ref: "B20 WHERE metadata.scope"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE metadata.scope = "private" RETURN bid_id
+    expect:
+      success: true
+      count_gte: 2
+
+  - id: T16-03
+    name: "RETURN metadata.namespace (B20)"
+    spec_ref: "B20 RETURN metadata.namespace"
+    seed_required: [e-001]
+    query: |
+      RECALL FROM EPISODIC WHERE bid_id = "e-001" RETURN bid_id, metadata.namespace, metadata.scope
+    expect:
+      success: true
+      count: 1
+      contains:
+        - bid_id: "e-001"
+          "metadata.namespace": "pubcontext-bidder"
+          "metadata.scope": "private"
+
+  - id: T16-04
+    name: "RETURN metadata.version (B20)"
+    spec_ref: "B20 RETURN metadata.version"
+    seed_required: [e-001]
+    query: |
+      RECALL FROM EPISODIC WHERE bid_id = "e-001" RETURN bid_id, metadata.version
+    expect:
+      success: true
+      count: 1
+      contains:
+        - bid_id: "e-001"
+          "metadata.version": 1

@@ -1,0 +1,55 @@
+# AQL v0.5 Test Suite - §14 HAVING
+# HAVING tests user-defined alias resolution for pass, suppress,
+# and multi-alias AND cases.
+
+suite: HAVING
+spec_section: "§13"
+total_tests: 4
+bug_refs: [B28]
+
+tests:
+  - id: T14-01
+    name: "HAVING alias pass (B28)"
+    spec_ref: "B28 HAVING alias pass"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "summer_2026" AGGREGATE COUNT(*) AS total HAVING total > 0 RETURN total
+    expect:
+      success: true
+      values:
+        total: 2
+
+  - id: T14-02
+    name: "HAVING alias suppress (B28)"
+    spec_ref: "B28 HAVING alias suppress"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "summer_2026" AGGREGATE COUNT(*) AS total HAVING total > 999 RETURN total
+    expect:
+      success: true
+      values_null: true
+      # total is suppressed because condition fails
+
+  - id: T14-03
+    name: "HAVING AVG alias (B28)"
+    spec_ref: "B28 HAVING AVG alias"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "summer_2026" AGGREGATE COUNT(*) AS n, AVG(cpm_paid) AS avg_cpm HAVING avg_cpm > 2.0 RETURN n, avg_cpm
+    expect:
+      success: true
+      values:
+        n: 2
+        avg_cpm: 2.15
+
+  - id: T14-04
+    name: "HAVING multi-alias AND (B28)"
+    spec_ref: "B28 HAVING multi-alias AND"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "summer_2026" AGGREGATE COUNT(*) AS uses, AVG(cpm_paid) AS avg_cpm HAVING uses > 1 AND avg_cpm > 1.0 RETURN uses, avg_cpm
+    expect:
+      success: true
+      values:
+        uses: 2
+        avg_cpm: 2.15

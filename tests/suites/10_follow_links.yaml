@@ -1,0 +1,35 @@
+# AQL v0.5 Test Suite - §10 FOLLOW LINKS
+# FOLLOW LINKS tests single-hop traversal across memory type boundaries.
+
+suite: FOLLOW_LINKS
+spec_section: "§10"
+total_tests: 2
+bug_refs: [B6]
+depends_on: [T08-01, T08-02]
+
+tests:
+  - id: T10-01
+    name: "FOLLOW LINKS SEMANTIC to PROC (B6)"
+    spec_ref: "B6 FOLLOW LINKS SEMANTIC→PROC"
+    seed_required: [semantic-ai, $PROC_ID]
+    # After T08-01 has created SEMANTIC→PROCEDURAL link
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "ai_enterprise_content" FOLLOW LINKS TYPE "triggers" RETURN pattern, confidence, steps
+    expect:
+      success: true
+      count: 1
+      contains:
+        - pattern: "tech_news_premium"
+
+  - id: T10-02
+    name: "FOLLOW LINKS PROC to EPISODIC (B6)"
+    spec_ref: "B6 FOLLOW LINKS PROC→EPISODIC"
+    seed_required: [$PROC_ID, e-001]
+    # After T08-02 has created PROCEDURAL→EPISODIC link
+    query: |
+      RECALL FROM PROCEDURAL WHERE pattern = "tech_news_premium" FOLLOW LINKS TYPE "applied_to" RETURN bid_id, cpm_paid
+    expect:
+      success: true
+      count: 1
+      contains:
+        - bid_id: "e-001"

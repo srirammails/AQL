@@ -1,0 +1,126 @@
+# AQL v0.5 Test Suite - §13 AGGREGATE
+# AGGREGATE covers all 5 operators (COUNT, SUM, AVG, MIN, MAX)
+# on all 5 memory types.
+
+suite: AGGREGATE
+spec_section: "§13"
+total_tests: 10
+bug_refs: [B3, B27]
+
+tests:
+  - id: T13-01
+    name: "COUNT EPISODIC (B27)"
+    spec_ref: "B27 COUNT EPISODIC"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "summer_2026" AGGREGATE COUNT(*) AS n RETURN n
+    expect:
+      success: true
+      values:
+        n: 2
+
+  - id: T13-02
+    name: "SUM EPISODIC (B3)"
+    spec_ref: "B3 SUM EPISODIC"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "summer_2026" AGGREGATE SUM(cpm_paid) AS total RETURN total
+    expect:
+      success: true
+      values:
+        total: 4.30
+
+  - id: T13-03
+    name: "AVG EPISODIC (B3)"
+    spec_ref: "B3 AVG EPISODIC"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "summer_2026" AGGREGATE AVG(cpm_paid) AS avg_cpm RETURN avg_cpm
+    expect:
+      success: true
+      values:
+        avg_cpm: 2.15
+
+  - id: T13-04
+    name: "MIN EPISODIC (B3)"
+    spec_ref: "B3 MIN EPISODIC"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "summer_2026" AGGREGATE MIN(cpm_paid) AS min_cpm RETURN min_cpm
+    expect:
+      success: true
+      values:
+        min_cpm: 1.10
+
+  - id: T13-05
+    name: "MAX EPISODIC (B3)"
+    spec_ref: "B3 MAX EPISODIC"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "summer_2026" AGGREGATE MAX(cpm_paid) AS max_cpm RETURN max_cpm
+    expect:
+      success: true
+      values:
+        max_cpm: 3.20
+
+  - id: T13-06
+    name: "All 5 aggregate operators"
+    spec_ref: "B3 all 5 ops"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "summer_2026" AGGREGATE COUNT(*) AS n, SUM(cpm_paid) AS total, AVG(cpm_paid) AS avg_cpm, MIN(cpm_paid) AS min_cpm, MAX(cpm_paid) AS max_cpm RETURN n, total, avg_cpm, min_cpm, max_cpm
+    expect:
+      success: true
+      values:
+        n: 2
+        total: 4.30
+        avg_cpm: 2.15
+        min_cpm: 1.10
+        max_cpm: 3.20
+
+  - id: T13-07
+    name: "COUNT+AVG WORKING (B3)"
+    spec_ref: "B3 COUNT+AVG WORKING"
+    seed_required: [w-001, w-002]
+    query: |
+      RECALL FROM WORKING WHERE geo = "IE" AGGREGATE COUNT(*) AS n, AVG(floor_price) AS avg_floor RETURN n, avg_floor
+    expect:
+      success: true
+      values:
+        n: 2
+        avg_floor: 2.75
+
+  - id: T13-08
+    name: "COUNT+AVG SEMANTIC (B3)"
+    spec_ref: "B3 COUNT+AVG SEMANTIC"
+    seed_required: [semantic-ai, semantic-finance]
+    query: |
+      RECALL FROM SEMANTIC WHERE active = true AGGREGATE COUNT(*) AS n, AVG(avg_cpm) AS mean_cpm RETURN n, mean_cpm
+    expect:
+      success: true
+      values:
+        n: 2
+        mean_cpm: 3.75
+
+  - id: T13-09
+    name: "COUNT PROCEDURAL (B3)"
+    spec_ref: "B3 COUNT PROCEDURAL"
+    seed_required: [$PROC_ID]
+    query: |
+      RECALL FROM PROCEDURAL WHERE severity = "high" AGGREGATE COUNT(*) AS n, AVG(confidence) AS avg_conf RETURN n, avg_conf
+    expect:
+      success: true
+      values:
+        n: 1
+        avg_conf: 0.72
+
+  - id: T13-10
+    name: "COUNT TOOLS (B27)"
+    spec_ref: "B27 COUNT TOOLS"
+    seed_required: [ctx_scorer_v2]
+    query: |
+      RECALL FROM TOOLS WHERE ranking > 0.5 AGGREGATE COUNT(*) AS n RETURN n
+    expect:
+      success: true
+      values:
+        n: 1

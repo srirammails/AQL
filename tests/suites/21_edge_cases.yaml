@@ -1,0 +1,122 @@
+# AQL v0.5 Test Suite - §21 Edge Cases
+# Edge cases and boundary conditions: empty results, idempotency,
+# type coercion, zero values, TTL units.
+
+suite: EDGE_CASES
+spec_section: "Various"
+total_tests: 10
+
+tests:
+  - id: T21-01
+    name: "Empty RECALL returns 0 records"
+    spec_ref: "Edge empty result"
+    seed_required: []
+    query: |
+      RECALL FROM EPISODIC WHERE bid_id = "nonexistent-99" RETURN bid_id
+    expect:
+      success: true
+      count: 0
+
+  - id: T21-02
+    name: "FORGET idempotent on deleted record"
+    spec_ref: "Edge FORGET idempotent"
+    seed_required: []
+    query: |
+      FORGET FROM WORKING WHERE bid_id = "nonexistent-99"
+    expect:
+      success: true
+      affected_count: 0
+
+  - id: T21-03
+    name: "UPDATE nonexistent record"
+    spec_ref: "Edge UPDATE nonexistent"
+    seed_required: []
+    query: |
+      UPDATE INTO EPISODIC WHERE bid_id = "ghost-99" (won = false)
+    expect:
+      success: true
+      affected_count: 0
+
+  - id: T21-04
+    name: "RECALL empty links array"
+    spec_ref: "Edge RECALL empty links"
+    seed_required: [e-001]
+    query: |
+      RECALL FROM EPISODIC WHERE bid_id = "e-001" RETURN bid_id
+    expect:
+      success: true
+      count: 1
+      # No links created, so links array should be empty or absent
+
+  - id: T21-05
+    name: "LIMIT before AGGREGATE"
+    spec_ref: "OBS-12 LIMIT before AGGREGATE"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "summer_2026" LIMIT 1 AGGREGATE COUNT(*) AS n RETURN n
+    expect:
+      success: true
+      values:
+        n: 1
+      # LIMIT applies before AGGREGATE
+
+  - id: T21-06
+    name: "ORDER BY + LIMIT"
+    spec_ref: "Edge ORDER BY + LIMIT"
+    seed_required: [e-001, e-002, e-003]
+    query: |
+      RECALL FROM EPISODIC WHERE won = true ORDER BY cpm_paid DESC LIMIT 1 RETURN bid_id, cpm_paid
+    expect:
+      success: true
+      count: 1
+      contains:
+        - bid_id: "e-001"
+          # e-001 has highest cpm_paid (3.20) among won=true
+
+  - id: T21-07
+    name: "Boolean false match"
+    spec_ref: "Edge boolean false"
+    seed_required: [e-001, e-002]
+    query: |
+      RECALL FROM EPISODIC WHERE won = false RETURN bid_id, won
+    expect:
+      success: true
+      count: 1
+      contains:
+        - bid_id: "e-002"
+          won: false
+
+  - id: T21-08
+    name: "Float exact match"
+    spec_ref: "Edge float exact match"
+    seed_required: [e-001]
+    query: |
+      RECALL FROM EPISODIC WHERE cpm_paid = 3.20 RETURN bid_id, cpm_paid
+    expect:
+      success: true
+      count: 1
+      contains:
+        - bid_id: "e-001"
+          cpm_paid: 3.20
+
+  - id: T21-09
+    name: "Zero-value float store"
+    spec_ref: "Edge zero-value float store"
+    seed_required: []
+    query: |
+      STORE INTO EPISODIC (bid_id = "zero-test", campaign = "x", won = false, cpm_paid = 0.0) SCOPE private NAMESPACE "test"
+    expect:
+      success: true
+      stored:
+        cpm_paid: 0.0
+
+  - id: T21-10
+    name: "TTL 1h unit conversion"
+    spec_ref: "Edge TTL 1h unit"
+    seed_required: []
+    query: |
+      STORE INTO WORKING (k = "ttl_h") TTL 1h
+    expect:
+      success: true
+      stored:
+        ttl_ms: 3600000

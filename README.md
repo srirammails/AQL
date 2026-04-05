@@ -1,251 +1,299 @@
-# ADB · Agent Database
+# AQL — Agent Query Language
 
-**The unified in-memory memory layer every AI agent has been missing.**
+A declarative query language for agent memory systems. AQL enables LLM agents to store, retrieve, link, and learn from their experiences across five memory types.
 
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Spec](https://img.shields.io/badge/AQL%20spec-v0.4-teal.svg)](spec/AQL_SPEC_v0.4.md)
-[![Status](https://img.shields.io/badge/status-specification%20%2B%20reference%20implementation-orange.svg)]()
+```sql
+RECALL FROM EPISODIC WHERE outcome = "success" ORDER BY confidence DESC LIMIT 5 RETURN *
+```
+
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Spec](https://img.shields.io/badge/AQL%20spec-v0.5-teal.svg)](spec/AQL_SPEC_v0.5.md)
+[![Tests](https://img.shields.io/badge/tests-150%20conformance-green.svg)](tests/)
 
 ---
 
-## The Problem
+## Why AQL?
 
-Every team building AI agents hits the same wall.
+**Agents need memory that persists, learns, and scales.**
 
-Agents need to remember across four dimensions simultaneously:
+| Traditional Approach | AQL Approach |
+|---------------------|--------------|
+| Retraining on new data | Write to memory, query later |
+| Hardcoded knowledge | Dynamic ontology via LINK |
+| Context stuffing | Windowed working memory |
+| Manual tool selection | Queryable tool registry |
 
-- **What is happening now** — active task state, loaded tools, current context
-- **What happened before** — past decisions, outcomes, episode history
-- **What they know about the world** — domain knowledge, entity relationships, concepts
-- **How to do things** — runbooks, procedures, action patterns
+**Core thesis:** Agent learning is the accumulation of relationships between memory records and tuned execution parameters—both queryable and writable through AQL.
 
-No single database handles all four. Every agent framework today duct-tapes Pinecone, Redis, Neo4j, and Postgres together and calls it memory. The agent code becomes tangled with storage logic. There is no standard query pattern. Every team reinvents this differently.
+---
 
-## The Solution
+## Try It Now
 
-ADB is a unified in-memory multimodal database designed for agents, not humans. It implements all four cognitive memory types in a single process, with a single query interface: **AQL — Agent Query Language**.
+### Browser Playground
 
-```
-Agent Container
-  ├── ADB Process
-  │     ├── Working Memory    — DashMap          — < 1ms
-  │     ├── Procedural Memory — petgraph          — < 5ms
-  │     ├── Semantic Memory   — usearch           — < 20ms
-  │     ├── Episodic Memory   — Arrow + DataFusion — < 50ms
-  │     └── Tool Registry     — ranked, dynamic   — < 5ms
-  │
-  │     AQL Query Planner
-  │     Arrow Flight IPC
-  │
-  ├── Agent Runtime
-  │     AQL query → assembled context → LLM → decision → write-back
+Open `playground/index.html` in your browser to parse and validate AQL queries instantly. No installation required.
+
+### Rust Reference Implementation
+
+```bash
+cargo add clawdb
 ```
 
-ADB runs as a sidecar process in the same isolated container as the agent. No network hops. No cross-contamination between agents. Each agent is cognitively sovereign.
+```rust
+use clawdb::ClawDB;
 
-## AQL — Agent Query Language
-
-AQL is an open specification for querying agent memory. Its verbs encode agentic intent, not just predicates. **If a non-expert can't read a query and understand it, the feature gets cut.**
-
-```sql
--- Load relevant tools
-LOAD TOOLS WHERE relevance > 0.8
-  ORDER BY ranking DESC
-  LIMIT 3
-
--- Recall with quality filter
-RECALL EPISODIC WHERE pod = "payments-api"
-  MIN_CONFIDENCE 0.7
-  ORDER BY time DESC
-  LIMIT 5
-
--- Store shared knowledge
-STORE SEMANTIC (
-  concept = "k8s_oom_pattern",
-  knowledge = "payments-api OOMs every Friday"
-)
-  SCOPE shared
-  NAMESPACE "platform-agents"
-
--- Forget old memories
-FORGET EPISODIC WHERE last_accessed > 30d
-
--- Assemble context for LLM
-REFLECT incident_id = {current}
-  INCLUDE EPISODIC WHERE incident_id = {current}
-  INCLUDE PROCEDURAL WHERE pattern_id = {matched}
-  INCLUDE WORKING
-
--- Full pipeline with timeout
-PIPELINE bid_decision TIMEOUT 80ms
-  LOAD TOOLS WHERE task = "bidding" LIMIT 3
-  | LOOKUP SEMANTIC KEY url = {url}
-  | RECALL EPISODIC WHERE url = {url} LIMIT 10
-  | REFLECT url = {url}
-      INCLUDE SEMANTIC
-      INCLUDE EPISODIC
+let db = ClawDB::new_memory().await?;
+db.execute("STORE INTO EPISODIC (event = \"user_login\", user_id = \"u123\") TTL 24h").await?;
+let results = db.execute("RECALL FROM EPISODIC WHERE user_id = \"u123\" RETURN *").await?;
 ```
 
-**AQL's core design principle:** AQL expresses intent. ADB handles implementation. The LLM decides what happens next.
-
-→ [Full AQL v0.4 Specification](spec/AQL_SPEC_v0.4.md)
-
-## Key Design Decisions
-
-**Four memory types — not arbitrary, cognitively grounded**
-
-The taxonomy is derived from cognitive science (Tulving, Baddeley) and independently validated through engineering necessity. Every agent building on multiple backends converges on these four types.
-
-| Memory Type | Storage Backend | Retrieval Mode | Latency |
-|-------------|----------------|----------------|---------|
-| Working | DashMap | Direct scan | < 1ms |
-| Tools | Ranked registry | Task relevance | < 2ms |
-| Procedural | petgraph | Pattern / goal match | < 5ms |
-| Semantic | usearch | Vector similarity | < 20ms |
-| Episodic | Arrow + DataFusion | Context / time | < 50ms |
-
-**Bidirectional memory — agents that self-improve**
-
-The LLM can push knowledge into semantic memory and rewrite procedural memory at runtime. Agents get smarter through use — no retraining, no redeployment.
-
-**ADB as MCP server — instant ecosystem reach**
-
-ADB exposes itself as a Model Context Protocol (MCP) server. Any MCP-compatible LLM — Claude, GPT, any future runtime — can query agent memory directly via AQL. No custom integration required.
-
-**Apache Arrow throughout**
-
-ADB stores data in Apache Arrow columnar format internally. Query results are returned via Arrow Flight IPC — zero-copy transport between ADB and the agent runtime.
-
-**CNCF aligned**
-
-FlowR — the companion workflow runtime built on CNCF Serverless Workflow specification — provides long-running execution for agents. FlowR gives agents time. ADB gives agents memory.
+---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  Agent Container                    │
-│                                                     │
-│  ┌──────────────────────────────────────────────┐   │
-│  │                 ADB Process                  │   │
-│  │                                              │   │
-│  │  Working      Procedural  Semantic  Episodic │   │
-│  │  DashMap      petgraph    usearch   Arrow    │   │
-│  │                                              │   │
-│  │  Tool Registry — ranked, dynamic loading     │   │
-│  │                                              │   │
-│  │  AQL Query Planner                           │   │
-│  │  Arrow Flight IPC                            │   │
-│  └──────────────────────────────────────────────┘   │
-│                       ↕ Unix socket                 │
-│  ┌──────────────────────────────────────────────┐   │
-│  │              Agent Runtime                   │   │
-│  │                                              │   │
-│  │  AQL query → assembled context → LLM         │   │
-│  │  LLM decision → action → write-back to ADB  │   │
-│  └──────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                          AQL Query                                   │
+│   RECALL FROM EPISODIC WHERE confidence > 0.8 LIMIT 10 RETURN *     │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                         aql-parser                                    │
+│  ┌────────────┐    ┌────────────┐    ┌────────────────────────────┐ │
+│  │  grammar/  │───▶│   Parser   │───▶│  AST (Statement, Expr...)  │ │
+│  │  aql.pest  │    │  (PEG)     │    │                            │ │
+│  └────────────┘    └────────────┘    └────────────────────────────┘ │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │
+          ┌────────────────────┼────────────────────┐
+          │                    │                    │
+          ▼                    ▼                    ▼
+   ┌─────────────┐     ┌─────────────┐     ┌─────────────────┐
+   │  clawdb     │     │   Your DB   │     │  clawdb-wasm    │
+   │  (LanceDB)  │     │  (ADB, etc) │     │  (Browser)      │
+   └─────────────┘     └─────────────┘     └─────────────────┘
 ```
+
+### Memory Types
+
+| Type | Purpose | Example |
+|------|---------|---------|
+| **WORKING** | Active context for current reasoning | Session state, live variables |
+| **EPISODIC** | Timestamped experiences | "User asked about refunds at 2pm" |
+| **SEMANTIC** | Domain knowledge and concepts | "Refund policy requires receipt" |
+| **PROCEDURAL** | Executable patterns with confidence | Steps to process a refund (0.92 confidence) |
+| **TOOLS** | Available capabilities | API endpoints, functions, services |
+
+### Operations
+
+```sql
+-- Read Operations (FROM)
+SCAN FROM WORKING WINDOW LAST 10            -- Recent context
+RECALL FROM EPISODIC WHERE user = "alice"   -- Query experiences
+LOOKUP FROM SEMANTIC KEY concept = "auth"   -- Direct key lookup
+LOAD FROM TOOLS WHERE category = "api"      -- Load tools
+
+-- Write Operations (INTO)
+STORE INTO EPISODIC (event = "login") TTL 7d
+UPDATE INTO PROCEDURAL WHERE pattern = "checkout" (confidence = 0.95)
+FORGET FROM WORKING WHERE stale = true
+
+-- Linking (Dynamic Ontology)
+LINK FROM SEMANTIC WHERE concept = "auth"
+     TO PROCEDURAL WHERE pattern = "login_flow"
+     TYPE "implements"
+
+-- Traversal
+RECALL FROM SEMANTIC WHERE concept = "payments"
+      FOLLOW LINKS TYPE "implements" INTO PROCEDURAL
+      RETURN pattern, confidence
+
+-- Aggregation
+RECALL FROM EPISODIC WHERE outcome = "success"
+      AGGREGATE COUNT(*) AS total, AVG(confidence) AS avg_conf
+      HAVING avg_conf > 0.8
+      RETURN total, avg_conf
+
+-- Pipelines (Time-Bounded)
+PIPELINE rtb_decision TIMEOUT 50ms
+    RECALL FROM SEMANTIC WHERE category = $category LIMIT 10
+    THEN FOLLOW LINKS TYPE "triggers" INTO PROCEDURAL
+    THEN AGGREGATE MAX(confidence) AS best
+    RETURN best
+```
+
+---
+
+## Project Structure
+
+```
+AQL/
+├── grammar/
+│   └── aql.pest              # PEG grammar (source of truth)
+├── crates/
+│   ├── aql-parser/           # Parser + AST (reusable)
+│   ├── clawdb/               # Reference implementation (LanceDB)
+│   └── clawdb-wasm/          # Browser WASM build
+├── playground/
+│   ├── index.html            # Browser playground
+│   └── pkg/                  # WASM bindings
+├── spec/
+│   └── AQL_SPEC_v0.5.md      # Formal specification
+└── tests/
+    ├── fixtures/seed.aql     # Canonical test data
+    ├── suites/*.yaml         # 150 conformance tests
+    └── coverage/             # Coverage matrix
+```
+
+---
+
+## Test Suite
+
+The conformance test suite ensures any AQL implementation matches the specification.
+
+```
+Coverage Summary
+──────────────────────────────────────────
+Grammar productions     ~93%   (T01-T21)
+Semantic validation     100%   (T17-01 to T17-08)
+Bug regressions         29/29  (All documented bugs)
+Edge cases              ~90%   (T21-01 to T21-10)
+──────────────────────────────────────────
+Total                   150 tests
+```
+
+### Running Tests
+
+Tests are YAML files describing queries and expected outcomes:
+
+```yaml
+- id: T02-01
+  name: "WHERE = string"
+  query: |
+    RECALL FROM EPISODIC WHERE bid_id = "e-001" RETURN bid_id
+  expect:
+    success: true
+    count: 1
+    contains:
+      - bid_id: "e-001"
+```
+
+Load `tests/fixtures/seed.aql` first, then validate each test suite against your implementation.
+
+---
+
+## Crates
+
+### aql-parser
+
+The parser crate is independent and can be used with any backend.
+
+```toml
+[dependencies]
+aql-parser = { git = "https://github.com/yourorg/aql" }
+```
+
+```rust
+use aql_parser::{parse_query, Statement};
+
+let stmt = parse_query("RECALL FROM EPISODIC WHERE x = 1 RETURN x")?;
+match stmt {
+    Statement::Recall { memory_type, conditions, .. } => {
+        // Build your own execution plan
+    }
+    _ => {}
+}
+```
+
+### clawdb
+
+Single-node reference implementation using LanceDB for vector storage.
+
+```toml
+[dependencies]
+clawdb = { git = "https://github.com/yourorg/aql" }
+```
+
+```rust
+use clawdb::{ClawDB, ClawConfig};
+
+// In-memory (testing)
+let db = ClawDB::new_memory().await?;
+
+// Persistent (production)
+let db = ClawDB::new("./agent_memory").await?;
+
+// Execute AQL
+let results = db.execute("RECALL FROM SEMANTIC WHERE topic = \"auth\" RETURN *").await?;
+```
+
+### clawdb-wasm
+
+WASM build for browser-based parsing and validation.
+
+```javascript
+import init, { parse_and_validate, execute_query } from './pkg/clawdb_wasm.js';
+
+await init();
+const result = parse_and_validate("RECALL FROM EPISODIC WHERE x = 1 RETURN x");
+console.log(result);
+```
+
+---
+
+## Building
+
+```bash
+# Check all crates
+cargo check
+
+# Build release
+cargo build --release
+
+# Build WASM
+cd crates/clawdb-wasm
+wasm-pack build --target web --out-dir ../../playground/pkg
+```
+
+---
+
+## Specification
+
+The formal specification lives in `spec/AQL_SPEC_v0.5.md`. Key design principles:
+
+1. **FROM and INTO express direction explicitly** — Read uses FROM, write uses INTO
+2. **AQL expresses intent, not implementation** — Storage details are backend concerns
+3. **Every statement is scoped to a memory type** — EPISODIC, SEMANTIC, PROCEDURAL, WORKING, TOOLS, or ALL
+4. **Ontology is dynamic and agent-owned** — LINK TYPE is arbitrary, meaning emerges from use
+5. **Pipelines are first-class** — Time-bounded query chains for real-time decisions
+
+---
 
 ## Use Cases
 
 **Real-Time Bidding** — Agent evaluates bid requests in < 80ms using a pipeline across semantic, episodic, and procedural memory.
 
-**Kubernetes Log Analysis** — Agent matches log events to known runbooks, checks incident history, acts, and learns from outcomes. Unresolved incidents are stored as new procedural patterns automatically.
+**Kubernetes Log Analysis** — Agent matches log events to known runbooks, checks incident history, acts, and learns from outcomes.
 
-**Compliance and Audit** — Every agent decision is stored with full context — what the agent knew, what procedure it followed, what outcome resulted. Fully queryable by regulators and auditors.
-
-## Repository Structure
-
-```
-AQL/
-├── LICENSE                       — Apache 2.0
-├── README.md                     — this file
-├── spec/
-│   ├── AQL_SPEC_v0.2.md          — AQL v0.2 specification
-│   └── AQL_SPEC_v0.3.md          — AQL v0.3 specification (current)
-├── grammar/
-│   └── aql.pest                  — PEG grammar for pest parser
-├── crates/
-│   └── aql-parser/               — Rust parser crate [in progress]
-│       ├── src/
-│       └── tests/
-└── docs/                         — architecture, design docs [planned]
-```
-
-## Status
-
-| Component | Status |
-|-----------|--------|
-| AQL v0.4 spec | Published |
-| PEG grammar (pest) | Published |
-| aql-parser crate | In progress |
-| ADB reference implementation | Planned |
-| ADB MCP server | Planned — week of March 31 |
-| FlowR integration | Planned |
-| CNCF submission | Planned — Q3 2026 |
-
-## What's New in v0.4
-
-**The SQL lesson:** AQL should read like English. If a non-expert can't understand a query, cut the feature.
-
-v0.4 removes implementation details that leaked into the grammar:
-
-| Removed | Reason |
-|---------|--------|
-| `DECAY lambda=...` | ADB handles decay algorithms |
-| `STRATEGY soft_delete` | ADB decides how to forget |
-| `TIER hot\|warm\|cold` | ADB manages storage placement |
-| `CHECK temporal` | ADB validates consistency |
-| `RESOLVE CONFLICTS` | ADB handles conflicts |
-| `STRENGTH` | ADB computes importance |
-| `VERSION` / `LOCK` | ADB handles concurrency |
-
-**What remains — only intent:**
-- `LOAD TOOLS` — new retrieval verb
-- `SCOPE private|shared|cluster` — multi-agent isolation
-- `NAMESPACE "..."` — agent identity
-- `MIN_CONFIDENCE` — quality filter
-- `FORGET` — simple predicate, no parameters
-
-**Grammar size:** v0.4 is only 20% larger than v0.1, with full multi-agent and tool support. v0.3 was 80% larger.
-
-## Roadmap — Open Questions
-
-1. **Embedding literals** — how does a caller pass a live embedding vector into a `LIKE` predicate?
-2. **Streaming RECALL** — should episodic recall support streaming for long histories?
-3. **Cross-cluster memory** — federation across multiple ADB instances?
-
-## Contributing
-
-AQL is an open specification. Contributions to the grammar, use cases, and reference implementation are welcome.
-
-- Open an issue to discuss a grammar change or new use case
-- Submit a PR against the spec with your proposed BNF addition
-- Share your agent memory scenarios — real use cases drive the grammar
-
-## Related Work
-
-| Project | What it does | How ADB differs |
-|---------|-------------|-----------------|
-| Mem0 | Personal assistant memory | Single modality, no query language |
-| MemoryBear | Personal assistant memory, graph-based | 5 external services required, no query language, no cognitive taxonomy — ADB: one process, AQL, agent-native |
-| Zep | Conversation memory | Episodic only, no unified interface |
-| Chroma / Pinecone | Vector search | Semantic only, no cognitive taxonomy |
-| mnemory | MCP memory server | Facts about users, not agent operations |
-| LangChain Memory | Conversation buffer | No persistent multimodal store |
-
-## License
-
-Apache 2.0 — see [LICENSE](LICENSE)
-
-AQL specification and ADB architecture are free to use, implement, and build upon.
+**Compliance and Audit** — Every agent decision is stored with full context — what the agent knew, what procedure it followed, what outcome resulted.
 
 ---
 
-*AQL v0.1 · March 2026 · Initial specification*
-*AQL v0.2 · March 2026 · Working memory as assembly layer, Tool Registry*
-*AQL v0.3 · March 2026 · FORGET, DECAY, SCOPE, NAMESPACE, CHECK, RESOLVE*
-*AQL v0.4 · March 2026 · Simplified — removed implementation details, kept intent*
+## License
 
-*Sriram Reddy · The unified memory layer every AI agent has been missing.*
+MIT — see [LICENSE](LICENSE)
+
+---
+
+## Contributing
+
+1. Read `spec/AQL_SPEC_v0.5.md`
+2. Run the test suite against your changes
+3. Ensure coverage matrix stays complete
+
+---
+
+*AQL v0.5 · April 2026 · Formal grammar with design rationale*
+
+*Sriram Reddy · The query language every AI agent has been missing.*

@@ -1,0 +1,88 @@
+# AQL v0.5 Test Suite - §17 Validation Rules §19
+# All §19 semantic validation rules: SCAN/LOAD/LOOKUP type restrictions,
+# FORGET without WHERE, STORE INTO ALL, LINK FROM ALL, PIPELINE without TIMEOUT.
+
+suite: VALIDATION
+spec_section: "§19"
+total_tests: 8
+
+tests:
+  - id: T17-01
+    name: "SCAN only WORKING"
+    spec_ref: "§19 SCAN only WORKING"
+    seed_required: []
+    query: |
+      SCAN FROM EPISODIC WINDOW LAST 10 RETURN bid_id
+    expect:
+      success: false
+      error_contains: "SCAN"
+
+  - id: T17-02
+    name: "LOAD only TOOLS"
+    spec_ref: "§19 LOAD only TOOLS"
+    seed_required: []
+    query: |
+      LOAD FROM EPISODIC WHERE campaign = "x" RETURN bid_id
+    expect:
+      success: false
+      error_contains: "LOAD"
+
+  - id: T17-03
+    name: "FORGET predicate required"
+    spec_ref: "§19 FORGET predicate required"
+    seed_required: []
+    query: |
+      FORGET FROM WORKING
+    expect:
+      success: false
+      error_contains: "predicate"
+
+  - id: T17-04
+    name: "STORE INTO ALL invalid"
+    spec_ref: "§19 STORE INTO ALL invalid"
+    seed_required: []
+    query: |
+      STORE INTO ALL (test = "x")
+    expect:
+      success: false
+      error_contains: "ALL"
+
+  - id: T17-05
+    name: "LINK FROM ALL invalid"
+    spec_ref: "§19 LINK FROM ALL invalid"
+    seed_required: []
+    query: |
+      LINK FROM ALL WHERE concept = "x" TO PROCEDURAL WHERE pattern = "y" TYPE "t"
+    expect:
+      success: false
+      error_contains: "ALL"
+
+  - id: T17-06
+    name: "LOOKUP invalid WORKING"
+    spec_ref: "§19 LOOKUP invalid WORKING"
+    seed_required: []
+    query: |
+      LOOKUP FROM WORKING KEY bid_id = "w-001" RETURN bid_id
+    expect:
+      success: false
+      error_contains: "LOOKUP"
+
+  - id: T17-07
+    name: "LOOKUP invalid EPISODIC"
+    spec_ref: "§19 LOOKUP invalid EPISODIC"
+    seed_required: []
+    query: |
+      LOOKUP FROM EPISODIC WHERE bid_id = "e-001" RETURN bid_id
+    expect:
+      success: false
+      error_contains: "LOOKUP"
+
+  - id: T17-08
+    name: "PIPELINE TIMEOUT required"
+    spec_ref: "§19 PIPELINE TIMEOUT required"
+    seed_required: []
+    query: |
+      PIPELINE p RECALL FROM EPISODIC WHERE campaign = "x" RETURN bid_id
+    expect:
+      success: false
+      error_contains: "TIMEOUT"
