@@ -127,6 +127,13 @@ PIPELINE rtb_decision TIMEOUT 50ms
 
 ---
 
+## Engine Architecture
+
+This repo holds the AQL specification and reference implementations. How the
+production engine (ADB) stores and serves AQL — partitions, replicated log, Lance on
+object storage, embedded / single-node / cluster profiles — is documented in the ADB
+repository: `ADB/.ai/ARCHITECTURE.md`.
+
 ## Project Structure
 
 ```

@@ -1345,6 +1345,12 @@ All pass. v0.5 is ready.
 
 ## 23. Stack Architecture
 
+> **Superseded (5 Oct 2026).** The engine architecture now lives in the **ADB
+> repository** (`ADB/.ai/ARCHITECTURE.md`, v1.0): one log-backed sequencer per
+> partition, materialized into Lance on object storage, in playground / embedded /
+> single-node / cluster profiles. The sidecar below survives as the *embedded*
+> profile. The AQL language is unchanged.
+
 ```
 Agent Container (one container, zero network hops)
   │
