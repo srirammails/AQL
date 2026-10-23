@@ -1302,6 +1302,9 @@ All pass. v0.5 is ready.
 
 ## 22. Open Questions for v0.6
 
+> **Update (9 Oct 2026):** v0.6 also adds subscriptions, continuous queries and the
+> `IN SCOPE` clause — see [`AQL_SPEC_v0.6_additions.md`](AQL_SPEC_v0.6_additions.md).
+
 1. **GROUP BY** — group before aggregating
    ```sql
    RECALL FROM EPISODIC WHERE campaign = "summer"

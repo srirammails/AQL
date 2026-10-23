@@ -24,6 +24,14 @@ pub fn execute_statement(stmt: &Statement, store: &mut MemoryStore) -> QueryResu
         Statement::Link(l) => execute_link(l, store),
         Statement::Reflect(r) => execute_reflect(r, store),
         Statement::Pipeline(p) => execute_pipeline(p, store),
+        Statement::Subscribe(_)
+        | Statement::Unsubscribe(_)
+        | Statement::Ack(_)
+        | Statement::Publish(_)
+        | Statement::Watch(_)
+        | Statement::Unwatch(_) => QueryResult::err(
+            "Subscriptions and continuous queries (AQL v0.6 draft) are not supported in the playground",
+        ),
     }
 }
 

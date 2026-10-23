@@ -1,0 +1,50 @@
+[package]
+name = "clawdb-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ClawDB HTTP + gRPC server with MCP/SSE support for Claude Desktop"
+
+[[bin]]
+name = "clawdb"
+path = "src/main.rs"
+
+[dependencies]
+# Internal
+clawdb = { path = "../clawdb" }
+aql-parser = { path = "../aql-parser" }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Web server (HTTP)
+axum = { version = "0.7", features = ["macros"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# gRPC server
+tonic = "0.12"
+prost = "0.13"
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Async utilities
+futures = { workspace = true }
+tokio-stream = "0.1"
+
+# UUID
+uuid = { workspace = true }
+
+[build-dependencies]
+tonic-build = "0.12"

@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package clawdb;
+
+// ClawDB gRPC Service for Agent Memory Operations
+service ClawDb {
+  // Execute an AQL query
+  rpc Query(QueryRequest) returns (QueryResponse);
+
+  // Execute an AQL query with streaming results (for large result sets)
+  rpc QueryStream(QueryRequest) returns (stream QueryResponse);
+
+  // Health check
+  rpc Health(HealthRequest) returns (HealthResponse);
+
+  // Get database statistics
+  rpc Stats(StatsRequest) returns (StatsResponse);
+}
+
+// Query request
+message QueryRequest {
+  // AQL query string (STORE, RECALL, FORGET, LINK, etc.)
+  string query = 1;
+
+  // Optional variables for parameterized queries (JSON encoded)
+  string variables = 2;
+
+  // Optional namespace for scoping
+  string namespace = 3;
+
+  // Optional scope (private/shared)
+  string scope = 4;
+}
+
+// Query response
+message QueryResponse {
+  // Success flag
+  bool success = 1;
+
+  // Result data (JSON encoded)
+  string data = 2;
+
+  // Error message if failed
+  string error = 3;
+
+  // Number of affected records (for STORE/UPDATE/FORGET)
+  int64 affected = 4;
+
+  // Execution time in microseconds
+  int64 execution_time_us = 5;
+}
+
+// Health check request
+message HealthRequest {}
+
+// Health check response
+message HealthResponse {
+  bool healthy = 1;
+  string version = 2;
+}
+
+// Stats request
+message StatsRequest {}
+
+// Stats response
+message StatsResponse {
+  int64 working_count = 1;
+  int64 episodic_count = 2;
+  int64 procedural_count = 3;
+  int64 semantic_count = 4;
+  int64 tools_count = 5;
+}

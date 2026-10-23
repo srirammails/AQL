@@ -16,7 +16,7 @@ pub struct AqlParser;
 
 /// Parse an AQL query string into a Statement
 pub fn parse(input: &str) -> ParseResult<Statement> {
-    let pairs = AqlParser::parse(Rule::aql, input).map_err(|e| ParseError::from_pest(e))?;
+    let pairs = AqlParser::parse(Rule::aql, input).map_err(|e| validation_error(input).unwrap_or_else(|| ParseError::from_pest(e)))?;
 
     // Get the statement from aql rule
     for pair in pairs {
@@ -30,6 +30,20 @@ pub fn parse(input: &str) -> ParseResult<Statement> {
     }
 
     Err(ParseError::Empty)
+}
+
+/// A clearer error than the grammar's for statements that break a §19 rule.
+fn validation_error(input: &str) -> Option<ParseError> {
+    let upper = input.trim_start().to_ascii_uppercase();
+    let has_where = upper.split_whitespace().any(|w| w == "WHERE");
+    for verb in ["FORGET", "UPDATE"] {
+        if upper.starts_with(verb) && !has_where {
+            return Some(ParseError::Validation(format!(
+                "{verb} requires a WHERE predicate (it never applies to a whole memory type)"
+            )));
+        }
+    }
+    None
 }
 
 /// Parse a statement
@@ -47,6 +61,12 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> 
         Rule::update_stmt => parse_update(inner),
         Rule::forget_stmt => parse_forget(inner),
         Rule::link_stmt => parse_link(inner),
+        Rule::subscribe_stmt => parse_subscribe(inner),
+        Rule::unsubscribe_stmt => parse_unsubscribe(inner),
+        Rule::ack_stmt => parse_ack(inner),
+        Rule::publish_stmt => parse_publish(inner),
+        Rule::watch_stmt => parse_watch(inner),
+        Rule::unwatch_stmt => parse_unwatch(inner),
         _ => Err(ParseError::UnexpectedRule(format!("{:?}", inner.as_rule()))),
     }
 }
@@ -183,6 +203,9 @@ fn parse_recall(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
             Rule::predicate => {
                 predicate = parse_predicate(item)?;
             }
+            Rule::in_scope_mod => {
+                modifiers.in_scope = Some(parse_in_scope(item)?);
+            }
             Rule::modifier => {
                 parse_modifier_into(item, &mut modifiers)?;
             }
@@ -202,14 +225,18 @@ fn parse_lookup(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
     let mut inner = pair.into_inner();
 
     let memory_type = parse_memory_type(inner.next().ok_or(ParseError::Missing("memory type"))?)?;
-    let predicate = parse_predicate(inner.next().ok_or(ParseError::Missing("predicate"))?)?;
 
+    let mut predicate = None;
     let mut modifiers = Modifiers::default();
     for item in inner {
-        if item.as_rule() == Rule::modifier {
-            parse_modifier_into(item, &mut modifiers)?;
+        match item.as_rule() {
+            Rule::in_scope_mod => modifiers.in_scope = Some(parse_in_scope(item)?),
+            Rule::predicate => predicate = Some(parse_predicate(item)?),
+            Rule::modifier => parse_modifier_into(item, &mut modifiers)?,
+            _ => {}
         }
     }
+    let predicate = predicate.ok_or(ParseError::Missing("predicate"))?;
 
     Ok(Statement::Lookup(LookupStmt {
         memory_type,
@@ -554,6 +581,9 @@ fn parse_modifier_into(
         Rule::timeout_mod => {
             mods.timeout = Some(parse_duration_from_mod(inner)?);
         }
+        Rule::in_scope_mod => {
+            mods.in_scope = Some(parse_in_scope(inner)?);
+        }
         Rule::min_confidence_mod => {
             let f = parse_float(inner.into_inner().next().ok_or(ParseError::Empty)?)?;
             mods.min_confidence = Some(f);
@@ -690,6 +720,152 @@ fn parse_window(pair: pest::iterators::Pair<Rule>) -> ParseResult<Window> {
         }
         _ => Err(ParseError::UnexpectedRule(format!("{:?}", first.as_rule()))),
     }
+}
+
+// ============================================================================
+// v0.6: subscriptions and continuous queries
+// ============================================================================
+
+/// Parse IN SCOPE "..." (named scope)
+fn parse_in_scope(pair: pest::iterators::Pair<Rule>) -> ParseResult<String> {
+    let lit = pair
+        .into_inner()
+        .find(|p| p.as_rule() == Rule::string_literal)
+        .ok_or(ParseError::Missing("scope"))?;
+    parse_string_literal(lit)
+}
+
+/// Parse a subscription / continuous-query id (string, variable or identifier)
+fn parse_handle(pair: pest::iterators::Pair<Rule>) -> ParseResult<String> {
+    let inner = pair.into_inner().next().ok_or(ParseError::Missing("id"))?;
+    match inner.as_rule() {
+        Rule::string_literal => parse_string_literal(inner),
+        _ => Ok(inner.as_str().to_string()),
+    }
+}
+
+/// Parse FROM NOW | FROM OFFSET n
+fn parse_start(pair: pest::iterators::Pair<Rule>) -> ParseResult<StartPosition> {
+    let inner = pair.into_inner().next().ok_or(ParseError::Missing("start position"))?;
+    match inner.as_rule() {
+        Rule::from_offset => {
+            let n = parse_integer(inner.into_inner().next().ok_or(ParseError::Missing("offset"))?)?;
+            Ok(StartPosition::Offset(n.max(0) as u64))
+        }
+        _ => Ok(StartPosition::Now),
+    }
+}
+
+/// Parse SCOPE "..." | TOPIC "..." target
+fn parse_target(pair: pest::iterators::Pair<Rule>) -> ParseResult<SubscribeTarget> {
+    let (rule, lit) = match pair.as_rule() {
+        Rule::subscribe_target => {
+            let t = pair.into_inner().next().ok_or(ParseError::Missing("scope or topic"))?;
+            let rule = t.as_rule();
+            (rule, t.into_inner().next().ok_or(ParseError::Missing("name"))?)
+        }
+        rule => (rule, pair.into_inner().next().ok_or(ParseError::Missing("name"))?),
+    };
+    let name = parse_string_literal(lit)?;
+    Ok(match rule {
+        Rule::topic_target => SubscribeTarget::Topic(name),
+        _ => SubscribeTarget::Scope(name),
+    })
+}
+
+/// Parse SUBSCRIBE statement
+fn parse_subscribe(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
+    let mut target = None;
+    let mut kinds = Vec::new();
+    let mut filter = None;
+    let mut start = StartPosition::Now;
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::subscribe_target => target = Some(parse_target(item)?),
+            Rule::kinds_clause => {
+                kinds = item.into_inner().map(|k| k.as_str().to_ascii_lowercase()).collect();
+            }
+            Rule::where_pred => {
+                let list = item.into_inner().next().ok_or(ParseError::Missing("conditions"))?;
+                filter = Some(parse_condition_list(list)?);
+            }
+            Rule::start_clause => start = parse_start(item)?,
+            _ => {}
+        }
+    }
+    Ok(Statement::Subscribe(SubscribeStmt {
+        target: target.ok_or(ParseError::Missing("scope or topic"))?,
+        kinds,
+        filter,
+        start,
+    }))
+}
+
+/// Parse UNSUBSCRIBE statement
+fn parse_unsubscribe(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
+    let handle = pair.into_inner().next().ok_or(ParseError::Missing("subscription id"))?;
+    Ok(Statement::Unsubscribe(UnsubscribeStmt { subscription: parse_handle(handle)? }))
+}
+
+/// Parse ACK statement
+fn parse_ack(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
+    let mut inner = pair.into_inner();
+    let subscription = parse_handle(inner.next().ok_or(ParseError::Missing("subscription id"))?)?;
+    let offset = parse_integer(inner.next().ok_or(ParseError::Missing("offset"))?)?;
+    Ok(Statement::Ack(AckStmt { subscription, offset: offset.max(0) as u64 }))
+}
+
+/// Parse PUBLISH statement
+fn parse_publish(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
+    let mut topic = None;
+    let mut payload = Vec::new();
+    let mut modifiers = Modifiers::default();
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::topic_target => {
+                if let SubscribeTarget::Topic(t) = parse_target(item)? {
+                    topic = Some(t);
+                }
+            }
+            Rule::payload => payload = parse_payload(item)?,
+            Rule::modifier => parse_modifier_into(item, &mut modifiers)?,
+            _ => {}
+        }
+    }
+    Ok(Statement::Publish(PublishStmt {
+        topic: topic.ok_or(ParseError::Missing("topic"))?,
+        payload,
+        modifiers,
+    }))
+}
+
+/// Parse WATCH statement
+fn parse_watch(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
+    let mut query = None;
+    let mut debounce = None;
+    let mut start = StartPosition::Now;
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::watch_query => {
+                let stmt = item.into_inner().next().ok_or(ParseError::Missing("query"))?;
+                query = Some(parse_statement_inner(stmt)?);
+            }
+            Rule::debounce_clause => debounce = Some(parse_duration_from_mod(item)?),
+            Rule::start_clause => start = parse_start(item)?,
+            _ => {}
+        }
+    }
+    Ok(Statement::Watch(WatchStmt {
+        query: Box::new(query.ok_or(ParseError::Missing("query"))?),
+        debounce,
+        start,
+    }))
+}
+
+/// Parse UNWATCH statement
+fn parse_unwatch(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
+    let handle = pair.into_inner().next().ok_or(ParseError::Missing("query id"))?;
+    Ok(Statement::Unwatch(UnwatchStmt { query_id: parse_handle(handle)? }))
 }
 
 /// Parse duration from modifier
@@ -1127,5 +1303,125 @@ mod tests {
         } else {
             panic!("Expected Recall statement");
         }
+    }
+
+    // ------------------------------------------------------------------
+    // v0.6 draft: subscriptions and continuous queries
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_v06_subscribe_scope_with_kinds() {
+        let stmt = parse(r#"SUBSCRIBE SCOPE "team:billing" KINDS fact, edge FROM NOW"#).unwrap();
+        let Statement::Subscribe(s) = stmt else { panic!("Expected Subscribe") };
+        assert_eq!(s.target, SubscribeTarget::Scope("team:billing".into()));
+        assert_eq!(s.kinds, vec!["fact".to_string(), "edge".to_string()]);
+        assert_eq!(s.start, StartPosition::Now);
+        assert!(s.filter.is_none());
+    }
+
+    #[test]
+    fn test_v06_subscribe_topic_filter_offset() {
+        let stmt =
+            parse(r#"SUBSCRIBE TOPIC "orders.events" WHERE status = "paid" FROM OFFSET 1042"#).unwrap();
+        let Statement::Subscribe(s) = stmt else { panic!("Expected Subscribe") };
+        assert_eq!(s.target, SubscribeTarget::Topic("orders.events".into()));
+        assert_eq!(s.filter.as_ref().map(|f| f.len()), Some(1));
+        assert_eq!(s.start, StartPosition::Offset(1042));
+    }
+
+    #[test]
+    fn test_v06_subscribe_defaults_to_now() {
+        let Statement::Subscribe(s) = parse(r#"subscribe topic "t""#).unwrap() else { panic!() };
+        assert_eq!(s.start, StartPosition::Now);
+        assert!(s.kinds.is_empty());
+    }
+
+    #[test]
+    fn test_v06_unsubscribe_ack_unwatch_handles() {
+        let Statement::Unsubscribe(u) = parse(r#"UNSUBSCRIBE "sub-7f3a""#).unwrap() else { panic!() };
+        assert_eq!(u.subscription, "sub-7f3a");
+        let Statement::Ack(a) = parse("ACK sub_7f3a OFFSET 99").unwrap() else { panic!() };
+        assert_eq!((a.subscription.as_str(), a.offset), ("sub_7f3a", 99));
+        let Statement::Unwatch(w) = parse("UNWATCH $cq").unwrap() else { panic!() };
+        assert_eq!(w.query_id, "$cq");
+    }
+
+    #[test]
+    fn test_v06_publish() {
+        let stmt = parse(r#"PUBLISH TOPIC "orders.events" (order_id = "o-1", status = "paid") TTL 7d"#).unwrap();
+        let Statement::Publish(p) = stmt else { panic!("Expected Publish") };
+        assert_eq!(p.topic, "orders.events");
+        assert_eq!(p.payload.len(), 2);
+        assert_eq!(p.modifiers.ttl, Some(Duration::from_secs(7 * 86400)));
+    }
+
+    #[test]
+    fn test_v06_watch_spec_example() {
+        let stmt = parse(
+            r#"WATCH RECALL FROM SEMANTIC IN SCOPE "agent:42" WHERE predicate = "owns" LIMIT 20 DEBOUNCE 100ms FROM NOW"#,
+        )
+        .unwrap();
+        let Statement::Watch(w) = stmt else { panic!("Expected Watch") };
+        assert_eq!(w.debounce, Some(Duration::from_millis(100)));
+        assert_eq!(w.start, StartPosition::Now);
+        let Statement::Recall(r) = *w.query else { panic!("Expected Recall inside Watch") };
+        assert_eq!(r.memory_type, MemoryType::Semantic);
+        assert_eq!(r.modifiers.in_scope.as_deref(), Some("agent:42"));
+        assert_eq!(r.modifiers.limit, Some(20));
+        assert!(matches!(r.predicate, Predicate::Where { .. }));
+    }
+
+    #[test]
+    fn test_v06_watch_lookup_from_offset() {
+        let Statement::Watch(w) =
+            parse(r#"WATCH LOOKUP FROM SEMANTIC KEY subject_id = "acct-9" FROM OFFSET 7"#).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(w.start, StartPosition::Offset(7));
+        assert!(matches!(*w.query, Statement::Lookup(_)));
+    }
+
+    #[test]
+    fn test_v06_watch_rejects_writes() {
+        assert!(parse(r#"WATCH STORE INTO SEMANTIC (a = 1)"#).is_err());
+        assert!(parse(r#"WATCH REFLECT FROM EPISODIC"#).is_err());
+    }
+
+    #[test]
+    fn test_v06_in_scope_as_modifier() {
+        let Statement::Store(s) = parse(r#"STORE INTO SEMANTIC (fact = "x") IN SCOPE "team:billing" TTL 1d"#).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(s.modifiers.in_scope.as_deref(), Some("team:billing"));
+        assert_eq!(s.modifiers.ttl, Some(Duration::from_secs(86400)));
+    }
+
+    #[test]
+    fn test_v06_old_scope_modifier_unchanged() {
+        let Statement::Recall(r) = parse("RECALL FROM SEMANTIC WHERE a = 1 SCOPE shared").unwrap() else {
+            panic!()
+        };
+        assert_eq!(r.modifiers.scope, Some(Scope::Shared));
+        assert!(r.modifiers.in_scope.is_none());
+    }
+
+    #[test]
+    fn test_v06_in_operator_still_works() {
+        let Statement::Recall(r) = parse(r#"RECALL FROM EPISODIC WHERE pod IN ["a", "b"] IN SCOPE "agent:1""#).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(r.modifiers.in_scope.as_deref(), Some("agent:1"));
+    }
+
+    #[test]
+    fn test_forget_without_where_explains() {
+        for q in ["FORGET FROM WORKING", "FORGET FROM ALL", "UPDATE INTO PROCEDURAL (a = 1)"] {
+            let msg = parse(q).unwrap_err().to_string();
+            assert!(msg.contains("WHERE predicate"), "{q}: {msg}");
+        }
+        assert!(parse(r#"FORGET FROM WORKING WHERE a = "b""#).is_ok());
     }
 }

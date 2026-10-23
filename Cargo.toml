@@ -4,6 +4,7 @@ members = [
     "crates/aql-parser",
     "crates/clawdb",
     "crates/clawdb-wasm",
+    "crates/clawdb-server",
 ]
 
 [workspace.package]

@@ -95,6 +95,14 @@ impl Executor {
             Statement::Link(l) => self.execute_link(l, backends, links, variables).await,
             Statement::Reflect(r) => self.execute_reflect(r, backends, links, variables).await,
             Statement::Pipeline(p) => self.execute_pipeline(p, backends, links, variables).await,
+            Statement::Subscribe(_)
+            | Statement::Unsubscribe(_)
+            | Statement::Ack(_)
+            | Statement::Publish(_)
+            | Statement::Watch(_)
+            | Statement::Unwatch(_) => Err(ClawError::InvalidQuery(
+                "subscriptions and continuous queries (AQL v0.6 draft) are not supported by ClawDB yet".into(),
+            )),
         }
     }
 

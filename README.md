@@ -253,6 +253,9 @@ console.log(result);
 
 ## Building
 
+Requires stable Rust and `protoc` (the Protocol Buffers compiler — Lance's build
+needs it; `apt install protobuf-compiler`, or set `PROTOC` to its path).
+
 ```bash
 # Check all crates
 cargo check

@@ -1,7 +1,10 @@
-// AQL Grammar - Agent Query Language v0.5
+// AQL Grammar - Agent Query Language v0.5, plus v0.6 draft additions
 //
 // AQL encodes agentic intent rather than database mechanics.
 // Core design: AQL expresses what the agent wants. ADB handles how memory works.
+//
+// v0.6 draft: SUBSCRIBE / UNSUBSCRIBE / ACK / PUBLISH / WATCH / UNWATCH and the
+// IN SCOPE "<scope>" clause (see spec/AQL_SPEC_v0.6_additions.md).
 
 // ============================================================================
 // Top-level rules
@@ -20,6 +23,12 @@ statement = {
   | update_stmt
   | forget_stmt
   | link_stmt
+  | subscribe_stmt
+  | unsubscribe_stmt
+  | ack_stmt
+  | publish_stmt
+  | watch_stmt
+  | unwatch_stmt
 }
 
 // ============================================================================
@@ -79,13 +88,16 @@ scan_stmt = {
 }
 
 // RECALL FROM EPISODIC WHERE pod = "payments" MIN_CONFIDENCE 0.7
+// Predicate is optional - allows RECALL FROM EPISODIC ORDER BY field
+// v0.6: optional IN SCOPE "agent:42" after the memory type
 recall_stmt = {
-    ^"RECALL" ~ ^"FROM" ~ memory_type ~ predicate ~ modifier*
+    ^"RECALL" ~ ^"FROM" ~ memory_type ~ in_scope_mod? ~ predicate? ~ modifier*
 }
 
 // LOOKUP FROM PROCEDURAL PATTERN $log_events THRESHOLD 0.7
+// v0.6: optional IN SCOPE "agent:42" after the memory type
 lookup_stmt = {
-    ^"LOOKUP" ~ ^"FROM" ~ memory_type ~ predicate ~ modifier*
+    ^"LOOKUP" ~ ^"FROM" ~ memory_type ~ in_scope_mod? ~ predicate ~ modifier*
 }
 
 // LOAD FROM TOOLS WHERE task = "bidding" ORDER BY ranking DESC LIMIT 3
@@ -124,6 +136,54 @@ link_stmt = {
     ^"TO" ~ memory_type ~ ^"WHERE" ~ condition_list ~
     ^"TYPE" ~ string_literal ~ (^"WEIGHT" ~ float_literal)?
 }
+
+// ============================================================================
+// Subscriptions and continuous queries (v0.6 draft)
+// ============================================================================
+
+// SUBSCRIBE SCOPE "team:billing" KINDS fact, edge FROM NOW
+// SUBSCRIBE TOPIC "orders.events" WHERE status = "paid" FROM OFFSET 1042
+subscribe_stmt = {
+    ^"SUBSCRIBE" ~ subscribe_target ~ kinds_clause? ~ where_pred? ~ start_clause?
+}
+
+subscribe_target = { scope_target | topic_target }
+scope_target = { ^"SCOPE" ~ string_literal }
+topic_target = { ^"TOPIC" ~ string_literal }
+
+// KINDS fact, edge
+kinds_clause = { ^"KINDS" ~ record_kind ~ ("," ~ record_kind)* }
+record_kind = { ^"entity" | ^"fact" | ^"edge" | ^"episode" | ^"tool" | ^"event" }
+
+// FROM NOW | FROM OFFSET 1042
+start_clause = { ^"FROM" ~ (from_now | from_offset) }
+from_now = { ^"NOW" }
+from_offset = { ^"OFFSET" ~ integer_literal }
+
+// UNSUBSCRIBE "sub-7f3a"
+unsubscribe_stmt = { ^"UNSUBSCRIBE" ~ handle }
+
+// ACK "sub-7f3a" OFFSET 1042
+ack_stmt = { ^"ACK" ~ handle ~ ^"OFFSET" ~ integer_literal }
+
+// PUBLISH TOPIC "orders.events" (order_id = "o-1", status = "paid") TTL 7d
+publish_stmt = { ^"PUBLISH" ~ topic_target ~ payload ~ modifier* }
+
+// WATCH RECALL FROM SEMANTIC IN SCOPE "agent:42" WHERE predicate = "owns" LIMIT 20
+//       DEBOUNCE 100ms FROM NOW
+watch_stmt = { ^"WATCH" ~ watch_query ~ debounce_clause? ~ start_clause? }
+
+// Statements a continuous query may wrap. Finer limits (the WATCH subset) are
+// enforced by the planner's classifier, not the grammar.
+watch_query = { recall_stmt | lookup_stmt | scan_stmt | load_stmt }
+
+debounce_clause = { ^"DEBOUNCE" ~ duration_literal }
+
+// UNWATCH "cq-91"
+unwatch_stmt = { ^"UNWATCH" ~ handle }
+
+// A subscription or continuous-query id
+handle = { string_literal | variable | identifier }
 
 // ============================================================================
 // Predicates
@@ -193,7 +253,12 @@ modifier = {
   | with_links_mod
   | follow_links_mod
   | window_mod
+  | in_scope_mod
 }
+
+// v0.6: named scope, e.g. STORE INTO SEMANTIC (...) IN SCOPE "team:billing".
+// Distinct from the v0.5 SCOPE private|shared|cluster modifier.
+in_scope_mod = { ^"IN" ~ ^"SCOPE" ~ string_literal }
 
 limit_mod = { ^"LIMIT" ~ integer_literal }
 
