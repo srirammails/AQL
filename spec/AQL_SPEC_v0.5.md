@@ -1302,6 +1302,9 @@ All pass. v0.5 is ready.
 
 ## 22. Open Questions for v0.6
 
+> **Update (9 Oct 2026):** v0.6 also adds subscriptions, continuous queries and the
+> `IN SCOPE` clause — see [`AQL_SPEC_v0.6_additions.md`](AQL_SPEC_v0.6_additions.md).
+
 1. **GROUP BY** — group before aggregating
    ```sql
    RECALL FROM EPISODIC WHERE campaign = "summer"
@@ -1334,7 +1337,8 @@ All pass. v0.5 is ready.
      ON concept = url
    ```
 
-6. **LINK WEIGHT update** — modify existing link weight
+6. **LINK WEIGHT update** — modify existing link weight *(done in v0.7 as
+   `UPDATE LINK` / `UNLINK`: [`AQL_SPEC_v0.7_additions.md`](AQL_SPEC_v0.7_additions.md))*
    ```sql
    UPDATE LINK FROM PROCEDURAL WHERE pattern_id = "oom-fix"
      TO EPISODIC WHERE incident_id = "inc-001"
@@ -1344,6 +1348,12 @@ All pass. v0.5 is ready.
 ---
 
 ## 23. Stack Architecture
+
+> **Superseded (5 Oct 2026).** The engine architecture now lives in the **ADB
+> repository** (`ADB/.ai/ARCHITECTURE.md`, v1.0): one log-backed sequencer per
+> partition, materialized into Lance on object storage, in playground / embedded /
+> single-node / cluster profiles. The sidecar below survives as the *embedded*
+> profile. The AQL language is unchanged.
 
 ```
 Agent Container (one container, zero network hops)

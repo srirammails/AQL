@@ -20,3 +20,6 @@ pub mod parser;
 pub use ast::*;
 pub use error::{ParseError, ParseResult};
 pub use parser::parse;
+
+/// The AQL grammar (pest), for tools and LLM clients that need the language definition.
+pub const GRAMMAR: &str = include_str!("grammar/aql.pest");

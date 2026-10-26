@@ -21,3 +21,6 @@ Thumbs.db
 
 # Test artifacts
 *.log
+
+# Test runner dependencies
+tests/node_modules/

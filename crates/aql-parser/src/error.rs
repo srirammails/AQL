@@ -12,6 +12,10 @@ pub enum ParseError {
     #[error("Parse error: {0}")]
     Pest(String),
 
+    /// Statement violates an AQL validation rule (spec §19)
+    #[error("Invalid statement: {0}")]
+    Validation(String),
+
     /// Empty input or missing expected content
     #[error("Empty or missing content")]
     Empty,

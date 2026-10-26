@@ -127,6 +127,13 @@ PIPELINE rtb_decision TIMEOUT 50ms
 
 ---
 
+## Engine Architecture
+
+This repo holds the AQL specification and reference implementations. How the
+production engine (ADB) stores and serves AQL — partitions, replicated log, Lance on
+object storage, embedded / single-node / cluster profiles — is documented in the ADB
+repository: `ADB/.ai/ARCHITECTURE.md`.
+
 ## Project Structure
 
 ```
@@ -141,7 +148,9 @@ AQL/
 │   ├── index.html            # Browser playground
 │   └── pkg/                  # WASM bindings
 ├── spec/
-│   └── AQL_SPEC_v0.5.md      # Formal specification
+│   ├── AQL_SPEC_v0.5.md      # Formal specification
+│   ├── AQL_SPEC_v0.6_additions.md  # Draft: subscriptions, WATCH, IN SCOPE
+│   └── AQL_SPEC_v0.7_additions.md  # Draft: UPDATE LINK, UNLINK
 └── tests/
     ├── fixtures/seed.aql     # Canonical test data
     ├── suites/*.yaml         # 150 conformance tests
@@ -245,6 +254,9 @@ console.log(result);
 ---
 
 ## Building
+
+Requires stable Rust and `protoc` (the Protocol Buffers compiler — Lance's build
+needs it; `apt install protobuf-compiler`, or set `PROTOC` to its path).
 
 ```bash
 # Check all crates

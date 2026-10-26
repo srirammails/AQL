@@ -128,6 +128,18 @@ This document maps grammar productions and spec sections to test IDs.
 | T09-01 | `with_links → WITH LINKS ALL` | §10 | B7 |
 | T09-02 | `with_links → WITH LINKS TYPE` | §10 | |
 
+### UPDATE LINK / UNLINK (v0.7, 24 tests)
+
+| Test ID | Production | Spec |
+|---|---|---|
+| T22-03 – T22-05 | `link_stmt` again, same type → weight updated | v0.7 §3 |
+| T22-06 – T22-07 | `update_link_stmt → … WEIGHT f` | v0.7 §2 |
+| T22-08 – T22-10 | `update_link_stmt → (type = …, weight = …)` | v0.7 §2 |
+| T22-11 – T22-12 | no matching link / records → 0 | v0.7 §2 |
+| T22-13 – T22-14 | validation: only weight / type; no ALL | v0.7 §2 |
+| T22-15 – T22-20 | `unlink_stmt` with / without TYPE; records stay; no-op | v0.7 §3 |
+| T22-21 – T22-24 | `link_stmt` again without WEIGHT keeps the weight | v0.7 §3 |
+
 ### FOLLOW LINKS (2 tests)
 
 | Test ID | Grammar Production | Spec § | Bug |

@@ -28,6 +28,92 @@ pub enum Statement {
     Forget(ForgetStmt),
     /// LINK FROM ... TO ... TYPE ...
     Link(LinkStmt),
+    /// UPDATE LINK FROM ... TO ... [TYPE "t"] WEIGHT w | (weight = w, type = "t2")  (v0.7)
+    UpdateLink(UpdateLinkStmt),
+    /// UNLINK FROM ... TO ... [TYPE "t"]  (v0.7)
+    Unlink(UnlinkStmt),
+    /// SUBSCRIBE SCOPE|TOPIC "..." [KINDS ...] [WHERE ...] [FROM NOW|OFFSET n] (v0.6)
+    Subscribe(SubscribeStmt),
+    /// UNSUBSCRIBE <id> (v0.6)
+    Unsubscribe(UnsubscribeStmt),
+    /// ACK <id> OFFSET n (v0.6)
+    Ack(AckStmt),
+    /// PUBLISH TOPIC "..." (...) (v0.6)
+    Publish(PublishStmt),
+    /// WATCH <read statement> [DEBOUNCE d] [FROM NOW|OFFSET n] (v0.6)
+    Watch(WatchStmt),
+    /// UNWATCH <id> (v0.6)
+    Unwatch(UnwatchStmt),
+}
+
+/// What a subscription follows: one scope or one topic (each lives in one partition)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SubscribeTarget {
+    Scope(String),
+    Topic(String),
+}
+
+/// Where a subscription or continuous query starts reading the log
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StartPosition {
+    /// The commit tip at registration
+    #[default]
+    Now,
+    /// Replay from this log offset if still retained
+    Offset(u64),
+}
+
+/// SUBSCRIBE statement (v0.6)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SubscribeStmt {
+    pub target: SubscribeTarget,
+    /// KINDS filter (entity, fact, edge, episode, tool, event); empty = all
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub kinds: Vec<String>,
+    /// Optional WHERE filter (plaintext columns only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<Vec<Condition>>,
+    pub start: StartPosition,
+}
+
+/// UNSUBSCRIBE statement (v0.6)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnsubscribeStmt {
+    pub subscription: String,
+}
+
+/// ACK statement (v0.6)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AckStmt {
+    pub subscription: String,
+    pub offset: u64,
+}
+
+/// PUBLISH statement (v0.6): a committed write of kind = event to a topic
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PublishStmt {
+    pub topic: String,
+    pub payload: Vec<FieldAssignment>,
+    pub modifiers: Modifiers,
+}
+
+/// WATCH statement (v0.6): a continuous query over a read statement
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WatchStmt {
+    /// The watched query (RECALL, LOOKUP, SCAN or LOAD)
+    pub query: Box<Statement>,
+    /// DEBOUNCE window for re-run classes
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub debounce: Option<Duration>,
+    pub start: StartPosition,
+}
+
+/// UNWATCH statement (v0.6)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnwatchStmt {
+    pub query_id: String,
 }
 
 /// Memory type enumeration
@@ -193,6 +279,34 @@ pub struct LinkStmt {
     pub link_type: String,
     /// Link weight
     pub weight: Option<f32>,
+}
+
+/// UPDATE LINK statement (v0.7): change the weight and/or type of the existing
+/// links between the matched records (of `link_type`, if given).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UpdateLinkStmt {
+    pub from_type: MemoryType,
+    pub from_conditions: Vec<Condition>,
+    pub to_type: MemoryType,
+    pub to_conditions: Vec<Condition>,
+    /// Only links of this type (all types when `None`)
+    pub link_type: Option<String>,
+    /// New weight
+    pub weight: Option<f32>,
+    /// New link type
+    pub new_type: Option<String>,
+}
+
+/// UNLINK statement (v0.7): remove the links between the matched records (of
+/// `link_type`, if given); the records stay.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnlinkStmt {
+    pub from_type: MemoryType,
+    pub from_conditions: Vec<Condition>,
+    pub to_type: MemoryType,
+    pub to_conditions: Vec<Condition>,
+    /// Only links of this type (all types when `None`)
+    pub link_type: Option<String>,
 }
 
 /// Query predicate
@@ -432,6 +546,9 @@ pub struct Modifiers {
     /// WINDOW modifier
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window: Option<Window>,
+    /// IN SCOPE "agent:42" — named scope (v0.6)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_scope: Option<String>,
 }
 
 /// ORDER BY specification
