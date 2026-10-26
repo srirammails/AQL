@@ -33,7 +33,8 @@ tests/
 │   ├── 15_scope_namespace.yaml # SCOPE/NAMESPACE tests (T15-01 to T15-05)
 │   ├── 16_dotted_fields.yaml # Dotted field path tests (T16-01 to T16-04)
 │   ├── 17_validation.yaml    # §19 validation rule tests (T17-01 to T17-08)
-│   └── 21_edge_cases.yaml    # Edge case tests (T21-01 to T21-10)
+│   ├── 21_edge_cases.yaml    # Edge case tests (T21-01 to T21-10)
+│   └── 22_link_update.yaml   # v0.7 UPDATE LINK / UNLINK / re-LINK (T22-01 to T22-24)
 └── coverage/
     └── coverage_matrix.md    # Grammar production → Test ID mapping
 ```
@@ -80,6 +81,10 @@ tests:
 | `count_gte` / `count_lte` | Minimum/maximum record count |
 | `contains` | Records that MUST be in results (partial match) |
 | `error_contains` | Substring that must appear in error message |
+| `links_count` | Exact number of links on the returned records (WITH LINKS) |
+| `links_contains` | Links that MUST be present (partial match; numbers within 1e-6) |
+| `links_present` | Whether the returned records carry any links |
+| `links_type_only` | Every returned link has this type |
 
 ## Test Categories
 
@@ -103,6 +108,7 @@ tests:
 | 16_dotted_fields | 4 | metadata.namespace, metadata.scope, metadata.version |
 | 17_validation | 8 | All §19 semantic rules |
 | 21_edge_cases | 10 | Boundaries, idempotency, type coercion |
+| 22_link_update | 24 | v0.7: UPDATE LINK (weight / type), UNLINK, re-LINK updates the weight |
 
 ## Implementation Notes
 

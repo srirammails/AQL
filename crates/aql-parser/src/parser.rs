@@ -61,6 +61,8 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> 
         Rule::update_stmt => parse_update(inner),
         Rule::forget_stmt => parse_forget(inner),
         Rule::link_stmt => parse_link(inner),
+        Rule::update_link_stmt => parse_update_link(inner),
+        Rule::unlink_stmt => parse_unlink(inner),
         Rule::subscribe_stmt => parse_subscribe(inner),
         Rule::unsubscribe_stmt => parse_unsubscribe(inner),
         Rule::ack_stmt => parse_ack(inner),
@@ -351,6 +353,64 @@ fn parse_link(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
         link_type,
         weight,
     }))
+}
+
+/// The `FROM … WHERE … TO … WHERE …` part LINK, UPDATE LINK and UNLINK share.
+type LinkEnds = (MemoryType, Vec<Condition>, MemoryType, Vec<Condition>);
+
+fn parse_link_ends(inner: &mut pest::iterators::Pairs<Rule>) -> ParseResult<LinkEnds> {
+    let from_type = parse_memory_type(inner.next().ok_or(ParseError::Missing("from type"))?)?;
+    let from_conditions = parse_condition_list(inner.next().ok_or(ParseError::Missing("from conditions"))?)?;
+    let to_type = parse_memory_type(inner.next().ok_or(ParseError::Missing("to type"))?)?;
+    let to_conditions = parse_condition_list(inner.next().ok_or(ParseError::Missing("to conditions"))?)?;
+    Ok((from_type, from_conditions, to_type, to_conditions))
+}
+
+/// `TYPE "t"` → `t`.
+fn parse_link_type_filter(pair: pest::iterators::Pair<Rule>) -> ParseResult<String> {
+    parse_string_literal(pair.into_inner().next().ok_or(ParseError::Missing("link type"))?)
+}
+
+/// Parse UPDATE LINK statement (v0.7)
+fn parse_update_link(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
+    let mut inner = pair.into_inner();
+    let (from_type, from_conditions, to_type, to_conditions) = parse_link_ends(&mut inner)?;
+    let (mut link_type, mut weight, mut new_type) = (None, None, None);
+    for item in inner {
+        match item.as_rule() {
+            Rule::link_type_filter => link_type = Some(parse_link_type_filter(item)?),
+            Rule::link_weight_set => {
+                weight = Some(parse_float(item.into_inner().next().ok_or(ParseError::Missing("weight"))?)?);
+            }
+            Rule::payload => {
+                for a in parse_payload(item)? {
+                    match (a.field.to_lowercase().as_str(), &a.value) {
+                        ("weight", Value::Float(w)) => weight = Some(*w as f32),
+                        ("weight", Value::Int(w)) => weight = Some(*w as f32),
+                        ("type", Value::String(t)) | ("link_type", Value::String(t)) => new_type = Some(t.clone()),
+                        (f, _) => {
+                            return Err(ParseError::Validation(format!(
+                                "UPDATE LINK sets weight (a number) and type (a string), not {f}"
+                            )))
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if weight.is_none() && new_type.is_none() {
+        return Err(ParseError::Validation("UPDATE LINK needs a new weight or type".into()));
+    }
+    Ok(Statement::UpdateLink(UpdateLinkStmt { from_type, from_conditions, to_type, to_conditions, link_type, weight, new_type }))
+}
+
+/// Parse UNLINK statement (v0.7)
+fn parse_unlink(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
+    let mut inner = pair.into_inner();
+    let (from_type, from_conditions, to_type, to_conditions) = parse_link_ends(&mut inner)?;
+    let link_type = inner.next().map(parse_link_type_filter).transpose()?;
+    Ok(Statement::Unlink(UnlinkStmt { from_type, from_conditions, to_type, to_conditions, link_type }))
 }
 
 /// Parse memory type
@@ -965,6 +1025,47 @@ fn parse_float(pair: pest::iterators::Pair<Rule>) -> ParseResult<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_v07_update_link_weight_spec_form() {
+        let s = parse(r#"UPDATE LINK FROM PROCEDURAL WHERE pattern_id = "oom-fix" TO EPISODIC WHERE incident_id = "inc-001" WEIGHT 0.99"#).unwrap();
+        let Statement::UpdateLink(u) = s else { panic!("{s:?}") };
+        assert_eq!((u.from_type, u.to_type), (MemoryType::Procedural, MemoryType::Episodic));
+        assert_eq!(u.link_type, None);
+        assert_eq!(u.weight, Some(0.99));
+        assert_eq!(u.new_type, None);
+    }
+
+    #[test]
+    fn test_v07_update_link_type_filter_and_assignments() {
+        let s = parse(r#"UPDATE LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" TYPE "related" (type = "depends_on", weight = 1)"#).unwrap();
+        let Statement::UpdateLink(u) = s else { panic!("{s:?}") };
+        assert_eq!(u.link_type.as_deref(), Some("related"));
+        assert_eq!(u.new_type.as_deref(), Some("depends_on"));
+        assert_eq!(u.weight, Some(1.0));
+        let s = parse(r#"UPDATE LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" TYPE "related" WEIGHT 0.5"#).unwrap();
+        let Statement::UpdateLink(u) = s else { panic!("{s:?}") };
+        assert_eq!((u.link_type.as_deref(), u.weight), (Some("related"), Some(0.5)));
+    }
+
+    #[test]
+    fn test_v07_update_link_rejects_other_fields_and_nothing_to_set() {
+        assert!(parse(r#"UPDATE LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" (color = "red")"#).is_err());
+        assert!(parse(r#"UPDATE LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" TYPE "related""#).is_err());
+        // UPDATE INTO is unchanged.
+        assert!(matches!(parse(r#"UPDATE INTO SEMANTIC WHERE key = "a" (x = 1)"#).unwrap(), Statement::Update(_)));
+    }
+
+    #[test]
+    fn test_v07_unlink() {
+        let s = parse(r#"UNLINK FROM SEMANTIC WHERE key = "a" TO EPISODIC WHERE key = "e" TYPE "evidence""#).unwrap();
+        let Statement::Unlink(u) = s else { panic!("{s:?}") };
+        assert_eq!((u.from_type, u.to_type), (MemoryType::Semantic, MemoryType::Episodic));
+        assert_eq!(u.link_type.as_deref(), Some("evidence"));
+        let s = parse(r#"UNLINK FROM SEMANTIC WHERE key = "a" TO EPISODIC WHERE key = "e""#).unwrap();
+        let Statement::Unlink(u) = s else { panic!("{s:?}") };
+        assert_eq!(u.link_type, None, "no TYPE: every link between them");
+    }
 
     #[test]
     fn test_parse_scan() {

@@ -229,6 +229,29 @@ function checkExpectation(result, expect, testId) {
     }
   }
 
+  // Link checks (WITH LINKS results): links on the returned records' `links`.
+  const allLinks = () => (result.data?.records ?? []).flatMap(r => (r.data ?? r).links ?? r.links ?? []);
+  if (expect.links_count !== undefined && result.success) {
+    const n = allLinks().length;
+    if (n !== expect.links_count) errors.push(`Expected links_count=${expect.links_count}, got ${n}`);
+  }
+  if (expect.links_present !== undefined && result.success) {
+    const present = allLinks().length > 0;
+    if (present !== expect.links_present) errors.push(`Expected links_present=${expect.links_present}, got ${present}`);
+  }
+  if (expect.links_type_only !== undefined && result.success) {
+    const other = allLinks().filter(l => l.link_type !== expect.links_type_only);
+    if (other.length) errors.push(`Expected only links of type "${expect.links_type_only}", got ${JSON.stringify(other.map(l => l.link_type))}`);
+  }
+  if (expect.links_contains && result.success) {
+    const links = allLinks();
+    for (const want of expect.links_contains) {
+      const found = links.some(l => Object.entries(want).every(([k, v]) =>
+        typeof v === 'number' && typeof l[k] === 'number' ? Math.abs(l[k] - v) < 1e-6 : l[k] === v));
+      if (!found) errors.push(`Expected link containing ${JSON.stringify(want)} not found in ${JSON.stringify(links)}`);
+    }
+  }
+
   return errors;
 }
 

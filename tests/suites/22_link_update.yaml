@@ -1,0 +1,213 @@
+# AQL v0.7 draft Test Suite - §22 UPDATE LINK / UNLINK
+# Changing and removing existing links (spec/AQL_SPEC_v0.7_additions.md), and LINK
+# between the same records with the same type updating the weight instead of
+# adding a parallel link. Tests run in order; the first ones create their records.
+
+suite: LINK_UPDATE
+spec_section: "v0.7 §1-§3"
+total_tests: 24
+
+tests:
+  - id: T22-01
+    name: "setup: record a"
+    query: |
+      STORE INTO SEMANTIC (key = "lu-a", concept = "lu_a")
+    expect:
+      success: true
+
+  - id: T22-02
+    name: "setup: record b"
+    query: |
+      STORE INTO SEMANTIC (key = "lu-b", concept = "lu_b")
+    expect:
+      success: true
+
+  - id: T22-03
+    name: "LINK a → b"
+    query: |
+      LINK FROM SEMANTIC WHERE concept = "lu_a" TO SEMANTIC WHERE concept = "lu_b" TYPE "related" WEIGHT 0.5
+    expect:
+      success: true
+      count: 1
+
+  - id: T22-04
+    name: "LINK again, same type: updates the weight (§3)"
+    query: |
+      LINK FROM SEMANTIC WHERE concept = "lu_a" TO SEMANTIC WHERE concept = "lu_b" TYPE "related" WEIGHT 0.7
+    expect:
+      success: true
+      count: 1
+
+  - id: T22-05
+    name: "one link, weight 0.7"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "lu_a" WITH LINKS ALL
+    expect:
+      success: true
+      count: 1
+      links_count: 1
+      links_contains:
+        - link_type: "related"
+          weight: 0.7
+
+  - id: T22-06
+    name: "UPDATE LINK … WEIGHT (spec form)"
+    query: |
+      UPDATE LINK FROM SEMANTIC WHERE concept = "lu_a" TO SEMANTIC WHERE concept = "lu_b" TYPE "related" WEIGHT 0.9
+    expect:
+      success: true
+      count: 1
+
+  - id: T22-07
+    name: "the weight changed"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "lu_a" WITH LINKS ALL
+    expect:
+      success: true
+      links_count: 1
+      links_contains:
+        - link_type: "related"
+          weight: 0.9
+
+  - id: T22-08
+    name: "UPDATE LINK (type = …, weight = …)"
+    query: |
+      UPDATE LINK FROM SEMANTIC WHERE concept = "lu_a" TO SEMANTIC WHERE concept = "lu_b" TYPE "related" (type = "depends_on", weight = 0.4)
+    expect:
+      success: true
+      count: 1
+
+  - id: T22-09
+    name: "FOLLOW LINKS the new type reaches b"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "lu_a" FOLLOW LINKS TYPE "depends_on"
+    expect:
+      success: true
+      count: 1
+      contains:
+        - concept: "lu_b"
+
+  - id: T22-10
+    name: "the old type is gone"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "lu_a" WITH LINKS TYPE "related"
+    expect:
+      success: true
+      links_count: 0
+
+  - id: T22-11
+    name: "UPDATE LINK with no matching link changes nothing"
+    query: |
+      UPDATE LINK FROM SEMANTIC WHERE concept = "lu_a" TO SEMANTIC WHERE concept = "lu_b" TYPE "no_such_type" WEIGHT 0.1
+    expect:
+      success: true
+      count: 0
+
+  - id: T22-12
+    name: "UPDATE LINK with no matching records changes nothing"
+    query: |
+      UPDATE LINK FROM SEMANTIC WHERE concept = "ghost" TO SEMANTIC WHERE concept = "lu_b" WEIGHT 0.1
+    expect:
+      success: true
+      count: 0
+
+  - id: T22-13
+    name: "UPDATE LINK sets only weight and type"
+    query: |
+      UPDATE LINK FROM SEMANTIC WHERE concept = "lu_a" TO SEMANTIC WHERE concept = "lu_b" (color = "red")
+    expect:
+      success: false
+      error_contains: "weight"
+
+  - id: T22-14
+    name: "UPDATE LINK FROM ALL is refused"
+    query: |
+      UPDATE LINK FROM ALL WHERE concept = "lu_a" TO SEMANTIC WHERE concept = "lu_b" WEIGHT 0.1
+    expect:
+      success: false
+      error_contains: "ALL"
+
+  - id: T22-15
+    name: "a second link type between the same records"
+    query: |
+      LINK FROM SEMANTIC WHERE concept = "lu_a" TO SEMANTIC WHERE concept = "lu_b" TYPE "mentions" WEIGHT 0.2
+    expect:
+      success: true
+      count: 1
+
+  - id: T22-16
+    name: "UNLINK … TYPE removes only that type"
+    query: |
+      UNLINK FROM SEMANTIC WHERE concept = "lu_a" TO SEMANTIC WHERE concept = "lu_b" TYPE "mentions"
+    expect:
+      success: true
+      count: 1
+
+  - id: T22-17
+    name: "the other link stays"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "lu_a" WITH LINKS ALL
+    expect:
+      success: true
+      links_count: 1
+      links_contains:
+        - link_type: "depends_on"
+
+  - id: T22-18
+    name: "UNLINK without TYPE removes every link between them"
+    query: |
+      UNLINK FROM SEMANTIC WHERE concept = "lu_a" TO SEMANTIC WHERE concept = "lu_b"
+    expect:
+      success: true
+      count: 1
+
+  - id: T22-19
+    name: "no links left; the records stay"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "lu_a" WITH LINKS ALL
+    expect:
+      success: true
+      count: 1
+      links_count: 0
+
+  - id: T22-20
+    name: "UNLINK again is a no-op"
+    query: |
+      UNLINK FROM SEMANTIC WHERE concept = "lu_a" TO SEMANTIC WHERE concept = "lu_b"
+    expect:
+      success: true
+      count: 0
+
+  - id: T22-21
+    name: "setup: record c"
+    query: |
+      STORE INTO SEMANTIC (key = "lu-c", concept = "lu_c")
+    expect:
+      success: true
+
+  - id: T22-22
+    name: "LINK a → c, weight 0.3"
+    query: |
+      LINK FROM SEMANTIC WHERE concept = "lu_a" TO SEMANTIC WHERE concept = "lu_c" TYPE "cites" WEIGHT 0.3
+    expect:
+      success: true
+      count: 1
+
+  - id: T22-23
+    name: "LINK again without WEIGHT keeps the weight (§3)"
+    query: |
+      LINK FROM SEMANTIC WHERE concept = "lu_a" TO SEMANTIC WHERE concept = "lu_c" TYPE "cites"
+    expect:
+      success: true
+      count: 1
+
+  - id: T22-24
+    name: "still one link, weight 0.3"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "lu_a" WITH LINKS ALL
+    expect:
+      success: true
+      links_count: 1
+      links_contains:
+        - link_type: "cites"
+          weight: 0.3

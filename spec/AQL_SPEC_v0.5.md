@@ -1337,7 +1337,8 @@ All pass. v0.5 is ready.
      ON concept = url
    ```
 
-6. **LINK WEIGHT update** — modify existing link weight
+6. **LINK WEIGHT update** — modify existing link weight *(done in v0.7 as
+   `UPDATE LINK` / `UNLINK`: [`AQL_SPEC_v0.7_additions.md`](AQL_SPEC_v0.7_additions.md))*
    ```sql
    UPDATE LINK FROM PROCEDURAL WHERE pattern_id = "oom-fix"
      TO EPISODIC WHERE incident_id = "inc-001"

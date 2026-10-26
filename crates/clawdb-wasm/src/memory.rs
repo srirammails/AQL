@@ -278,6 +278,15 @@ impl MemoryStore {
             return Err(format!("Target record not found: {}", target_id));
         }
 
+        // v0.7: LINK again between the same records with the same type updates that
+        // link's weight instead of adding a parallel one.
+        if let Some(id) = self.link_ids_between(source_id, target_id, Some(link_type)).into_iter().next() {
+            if let Some(w) = weight {
+                self.update_link(&id, None, Some(w));
+            }
+            return self.links.get(&id).cloned().ok_or_else(|| "link vanished".to_string());
+        }
+
         let link = Link::new(source_id, target_id, link_type, weight);
         let link_id = link.id.clone();
 
@@ -302,6 +311,52 @@ impl MemoryStore {
         }
 
         Ok(link)
+    }
+
+    /// The ids of the links from `source_id` to `target_id` (of `link_type`, if given).
+    pub fn link_ids_between(&self, source_id: &str, target_id: &str, link_type: Option<&str>) -> Vec<String> {
+        self.links_by_source
+            .get(source_id)
+            .into_iter()
+            .flatten()
+            .filter(|id| {
+                self.links.get(*id).is_some_and(|l| l.target_id == target_id && link_type.is_none_or(|t| l.link_type == t))
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Change a link's type and/or weight (v0.7 UPDATE LINK), and the copy its
+    /// source record carries.
+    pub fn update_link(&mut self, link_id: &str, link_type: Option<&str>, weight: Option<f32>) -> bool {
+        let Some(link) = self.links.get_mut(link_id) else { return false };
+        if let Some(t) = link_type {
+            link.link_type = t.to_string();
+        }
+        if let Some(w) = weight {
+            link.weight = w;
+        }
+        let (updated, source) = (link.clone(), link.source_id.clone());
+        if let Some(record) = self.get_record_mut(&source) {
+            for l in record.links.iter_mut().filter(|l| l.id == link_id) {
+                *l = updated.clone();
+            }
+        }
+        true
+    }
+
+    /// Remove one link (v0.7 UNLINK); the records stay.
+    pub fn remove_link(&mut self, link_id: &str) -> bool {
+        let Some(link) = self.links.remove(link_id) else { return false };
+        for index in [&mut self.links_by_source, &mut self.links_by_target] {
+            for ids in index.values_mut() {
+                ids.retain(|id| id != link_id);
+            }
+        }
+        if let Some(record) = self.get_record_mut(&link.source_id) {
+            record.links.retain(|l| l.id != link_id);
+        }
+        true
     }
 
     /// Remove all links for a record (when it's deleted)

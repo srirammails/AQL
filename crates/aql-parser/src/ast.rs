@@ -28,6 +28,10 @@ pub enum Statement {
     Forget(ForgetStmt),
     /// LINK FROM ... TO ... TYPE ...
     Link(LinkStmt),
+    /// UPDATE LINK FROM ... TO ... [TYPE "t"] WEIGHT w | (weight = w, type = "t2")  (v0.7)
+    UpdateLink(UpdateLinkStmt),
+    /// UNLINK FROM ... TO ... [TYPE "t"]  (v0.7)
+    Unlink(UnlinkStmt),
     /// SUBSCRIBE SCOPE|TOPIC "..." [KINDS ...] [WHERE ...] [FROM NOW|OFFSET n] (v0.6)
     Subscribe(SubscribeStmt),
     /// UNSUBSCRIBE <id> (v0.6)
@@ -275,6 +279,34 @@ pub struct LinkStmt {
     pub link_type: String,
     /// Link weight
     pub weight: Option<f32>,
+}
+
+/// UPDATE LINK statement (v0.7): change the weight and/or type of the existing
+/// links between the matched records (of `link_type`, if given).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UpdateLinkStmt {
+    pub from_type: MemoryType,
+    pub from_conditions: Vec<Condition>,
+    pub to_type: MemoryType,
+    pub to_conditions: Vec<Condition>,
+    /// Only links of this type (all types when `None`)
+    pub link_type: Option<String>,
+    /// New weight
+    pub weight: Option<f32>,
+    /// New link type
+    pub new_type: Option<String>,
+}
+
+/// UNLINK statement (v0.7): remove the links between the matched records (of
+/// `link_type`, if given); the records stay.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnlinkStmt {
+    pub from_type: MemoryType,
+    pub from_conditions: Vec<Condition>,
+    pub to_type: MemoryType,
+    pub to_conditions: Vec<Condition>,
+    /// Only links of this type (all types when `None`)
+    pub link_type: Option<String>,
 }
 
 /// Query predicate

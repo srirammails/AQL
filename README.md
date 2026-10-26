@@ -148,7 +148,9 @@ AQL/
 │   ├── index.html            # Browser playground
 │   └── pkg/                  # WASM bindings
 ├── spec/
-│   └── AQL_SPEC_v0.5.md      # Formal specification
+│   ├── AQL_SPEC_v0.5.md      # Formal specification
+│   ├── AQL_SPEC_v0.6_additions.md  # Draft: subscriptions, WATCH, IN SCOPE
+│   └── AQL_SPEC_v0.7_additions.md  # Draft: UPDATE LINK, UNLINK
 └── tests/
     ├── fixtures/seed.aql     # Canonical test data
     ├── suites/*.yaml         # 150 conformance tests

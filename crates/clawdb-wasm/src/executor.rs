@@ -2,7 +2,7 @@
 //!
 //! Executes parsed AQL statements against the in-memory store.
 //! Supports: STORE, RECALL, LOOKUP, LOAD, SCAN, FORGET, UPDATE,
-//! LINK, AGGREGATE, HAVING, REFLECT, PIPELINE, WITH LINKS, FOLLOW LINKS
+//! LINK, UPDATE LINK, UNLINK, AGGREGATE, HAVING, REFLECT, PIPELINE, WITH LINKS, FOLLOW LINKS
 
 use aql_parser::*;
 use serde_json::{json, Value};
@@ -22,6 +22,8 @@ pub fn execute_statement(stmt: &Statement, store: &mut MemoryStore) -> QueryResu
         Statement::Forget(f) => execute_forget(f, store),
         Statement::Update(u) => execute_update(u, store),
         Statement::Link(l) => execute_link(l, store),
+        Statement::UpdateLink(u) => execute_update_link(u, store),
+        Statement::Unlink(u) => execute_unlink(u, store),
         Statement::Reflect(r) => execute_reflect(r, store),
         Statement::Pipeline(p) => execute_pipeline(p, store),
         Statement::Subscribe(_)
@@ -445,8 +447,57 @@ fn execute_link(stmt: &LinkStmt, store: &mut MemoryStore) -> QueryResult {
         "source_count": source_ids.len(),
         "target_count": target_ids.len(),
         "links_created": links_created,
+        "count": links_created,
         "errors": errors
     }))
+}
+
+/// The ids of the records of `mem` matching `conditions` (empty for ALL / unknown).
+fn matching_ids(store: &MemoryStore, mem: &MemoryType, conditions: &[Condition]) -> Vec<String> {
+    store
+        .get_store(mem)
+        .map(|m| m.values().filter(|r| matches_conditions(r, conditions)).map(|r| r.id.clone()).collect())
+        .unwrap_or_default()
+}
+
+/// The links an UPDATE LINK / UNLINK addresses: between the matched records, of
+/// `link_type` if given. No matching records → no links (not an error, as UPDATE
+/// and FORGET with no match).
+fn addressed_links(
+    store: &MemoryStore,
+    from: (&MemoryType, &[Condition]),
+    to: (&MemoryType, &[Condition]),
+    link_type: Option<&str>,
+) -> Result<Vec<String>, String> {
+    if matches!(from.0, MemoryType::All) || matches!(to.0, MemoryType::All) {
+        return Err("ALL is not allowed as a link end".into());
+    }
+    let sources = matching_ids(store, from.0, from.1);
+    let targets = matching_ids(store, to.0, to.1);
+    Ok(sources
+        .iter()
+        .flat_map(|s| targets.iter().flat_map(move |t| store.link_ids_between(s, t, link_type)))
+        .collect())
+}
+
+/// Execute UPDATE LINK (v0.7)
+fn execute_update_link(stmt: &UpdateLinkStmt, store: &mut MemoryStore) -> QueryResult {
+    let ids = match addressed_links(store, (&stmt.from_type, &stmt.from_conditions), (&stmt.to_type, &stmt.to_conditions), stmt.link_type.as_deref()) {
+        Ok(ids) => ids,
+        Err(e) => return QueryResult::err(&format!("UPDATE LINK: {e}")),
+    };
+    let n = ids.iter().filter(|id| store.update_link(id, stmt.new_type.as_deref(), stmt.weight)).count();
+    QueryResult::ok(json!({ "action": "update_link", "count": n }))
+}
+
+/// Execute UNLINK (v0.7)
+fn execute_unlink(stmt: &UnlinkStmt, store: &mut MemoryStore) -> QueryResult {
+    let ids = match addressed_links(store, (&stmt.from_type, &stmt.from_conditions), (&stmt.to_type, &stmt.to_conditions), stmt.link_type.as_deref()) {
+        Ok(ids) => ids,
+        Err(e) => return QueryResult::err(&format!("UNLINK: {e}")),
+    };
+    let n = ids.iter().filter(|id| store.remove_link(id)).count();
+    QueryResult::ok(json!({ "action": "unlink", "count": n }))
 }
 
 /// Execute REFLECT statement

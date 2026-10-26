@@ -103,6 +103,9 @@ impl Executor {
             | Statement::Unwatch(_) => Err(ClawError::InvalidQuery(
                 "subscriptions and continuous queries (AQL v0.6 draft) are not supported by ClawDB yet".into(),
             )),
+            Statement::UpdateLink(_) | Statement::Unlink(_) => Err(ClawError::InvalidQuery(
+                "UPDATE LINK / UNLINK (AQL v0.7 draft) are not supported by ClawDB; ADB implements them".into(),
+            )),
         }
     }
 

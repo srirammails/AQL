@@ -5,6 +5,7 @@
 //
 // v0.6 draft: SUBSCRIBE / UNSUBSCRIBE / ACK / PUBLISH / WATCH / UNWATCH and the
 // IN SCOPE "<scope>" clause (see spec/AQL_SPEC_v0.6_additions.md).
+// v0.7 draft: UPDATE LINK and UNLINK (see spec/AQL_SPEC_v0.7_additions.md).
 
 // ============================================================================
 // Top-level rules
@@ -20,9 +21,11 @@ statement = {
   | lookup_stmt
   | load_stmt
   | store_stmt
+  | update_link_stmt
   | update_stmt
   | forget_stmt
   | link_stmt
+  | unlink_stmt
   | subscribe_stmt
   | unsubscribe_stmt
   | ack_stmt
@@ -136,6 +139,29 @@ link_stmt = {
     ^"TO" ~ memory_type ~ ^"WHERE" ~ condition_list ~
     ^"TYPE" ~ string_literal ~ (^"WEIGHT" ~ float_literal)?
 }
+
+// v0.7: change existing links in place — their weight, their type, or both. The
+// optional TYPE selects which links between the matched records change.
+// UPDATE LINK FROM PROCEDURAL WHERE pattern_id = "oom-fix"
+//   TO EPISODIC WHERE incident_id = "inc-001" TYPE "applied_to" WEIGHT 0.99
+// UPDATE LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b"
+//   TYPE "related" (type = "depends_on", weight = 0.4)
+update_link_stmt = {
+    ^"UPDATE" ~ ^"LINK" ~ ^"FROM" ~ memory_type ~ ^"WHERE" ~ condition_list ~
+    ^"TO" ~ memory_type ~ ^"WHERE" ~ condition_list ~
+    link_type_filter? ~ (link_weight_set | payload)
+}
+
+// v0.7: remove links without touching the records at either end.
+// UNLINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" TYPE "related"
+unlink_stmt = {
+    ^"UNLINK" ~ ^"FROM" ~ memory_type ~ ^"WHERE" ~ condition_list ~
+    ^"TO" ~ memory_type ~ ^"WHERE" ~ condition_list ~
+    link_type_filter?
+}
+
+link_type_filter = { ^"TYPE" ~ string_literal }
+link_weight_set = { ^"WEIGHT" ~ float_literal }
 
 // ============================================================================
 // Subscriptions and continuous queries (v0.6 draft)
