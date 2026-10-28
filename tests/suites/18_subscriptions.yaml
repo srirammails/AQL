@@ -1,0 +1,136 @@
+# AQL v0.6 Test Suite - Subscriptions (SUBSCRIBE / PUBLISH / ACK / UNSUBSCRIBE)
+# spec/AQL_SPEC_v0.6_additions.md §2. Statement-level behaviour only: deliveries
+# go over the engine's transports (SSE / MCP), which the engine's own tests cover.
+# Tests run in order; ${sub} and ${pub} are captured from earlier results.
+
+suite: SUBSCRIPTIONS
+spec_section: "v0.6 §2"
+requires: server
+total_tests: 14
+
+tests:
+  - id: T18-01
+    name: "SUBSCRIBE TOPIC … FROM NOW returns a handle and a start offset"
+    query: |
+      SUBSCRIBE TOPIC "conf.orders" FROM NOW
+    expect:
+      success: true
+      fields:
+        data.type: "subscription"
+      fields_exist: [data.subscription, data.start_offset]
+    capture:
+      sub: data.subscription
+
+  - id: T18-02
+    name: "PUBLISH writes an event and returns its offset"
+    query: |
+      PUBLISH TOPIC "conf.orders" (order_id = "o-1", status = "paid") TTL 7d
+    expect:
+      success: true
+      fields:
+        data.topic: "conf.orders"
+      fields_exist: [data.id, data.offset]
+    capture:
+      pub: data.offset
+
+  - id: T18-03
+    name: "ACK moves the cursor to the acknowledged offset"
+    query: |
+      ACK "${sub}" OFFSET ${pub}
+    expect:
+      success: true
+      fields:
+        data.subscription: "${sub}"
+
+  - id: T18-04
+    name: "ACK an unknown subscription fails"
+    query: |
+      ACK "sub-does-not-exist" OFFSET 1
+    expect:
+      success: false
+      error_contains: "not found"
+
+  - id: T18-05
+    name: "SUBSCRIBE TOPIC with WHERE and FROM OFFSET"
+    query: |
+      SUBSCRIBE TOPIC "conf.orders" WHERE status = "paid" FROM OFFSET 1
+    expect:
+      success: true
+      fields:
+        data.type: "subscription"
+        data.start_offset: 1
+
+  - id: T18-06
+    name: "SUBSCRIBE SCOPE with KINDS"
+    query: |
+      SUBSCRIBE SCOPE "team:conf" KINDS fact, edge FROM NOW
+    expect:
+      success: true
+      fields_exist: [data.subscription]
+
+  - id: T18-07
+    name: "SUBSCRIBE without a start clause (FROM NOW is the default)"
+    query: |
+      SUBSCRIBE TOPIC "conf.other"
+    expect:
+      success: true
+      fields_exist: [data.subscription, data.start_offset]
+
+  - id: T18-08
+    name: "an unknown record kind is a parse error"
+    query: |
+      SUBSCRIBE TOPIC "conf.orders" KINDS widget
+    expect:
+      success: false
+      error_contains: "parse"
+
+  - id: T18-09
+    name: "PUBLISH needs a payload"
+    query: |
+      PUBLISH TOPIC "conf.orders"
+    expect:
+      success: false
+      error_contains: "parse"
+
+  - id: T18-10
+    name: "PUBLISH to a second topic"
+    query: |
+      PUBLISH TOPIC "conf.other" (n = 1)
+    expect:
+      success: true
+      fields:
+        data.topic: "conf.other"
+
+  - id: T18-11
+    name: "UNSUBSCRIBE stops the subscription"
+    query: |
+      UNSUBSCRIBE "${sub}"
+    expect:
+      success: true
+      fields:
+        data.unsubscribed: true
+
+  - id: T18-12
+    name: "UNSUBSCRIBE again: nothing to stop"
+    query: |
+      UNSUBSCRIBE "${sub}"
+    expect:
+      success: true
+      fields:
+        data.unsubscribed: false
+
+  - id: T18-13
+    name: "ACK after UNSUBSCRIBE fails"
+    query: |
+      ACK "${sub}" OFFSET ${pub}
+    expect:
+      success: false
+      error_contains: "not found"
+
+  - id: T18-14
+    name: "keywords are case-insensitive"
+    query: |
+      subscribe topic "conf.orders" from now
+    expect:
+      success: true
+      fields_exist: [data.subscription]

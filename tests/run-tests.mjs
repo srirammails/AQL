@@ -252,8 +252,34 @@ function checkExpectation(result, expect, testId) {
     }
   }
 
+  // Field checks (v0.6 suites): {"data.type": "snapshot", "data.result.data.count": 1}.
+  // Paths are dotted, from the QueryResult; `fields_exist` only needs the path present.
+  if (expect.fields && result.success) {
+    for (let [path, want] of Object.entries(expect.fields)) {
+      const got = getPath(result, path);
+      if (typeof want === 'string') want = want.replace(/\$\{(\w+)\}/g, (m, n) => (n in captured ? String(captured[n]) : m));
+      const same = typeof want === 'number' && typeof got === 'number'
+        ? Math.abs(got - want) < 1e-6
+        : JSON.stringify(got) === JSON.stringify(want);
+      if (!same) errors.push(`Expected ${path}=${JSON.stringify(want)}, got ${JSON.stringify(got)}`);
+    }
+  }
+  if (expect.fields_exist && result.success) {
+    for (const path of expect.fields_exist) {
+      if (getPath(result, path) === undefined) errors.push(`Expected ${path} to be present`);
+    }
+  }
+
   return errors;
 }
+
+function getPath(obj, path) {
+  return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+
+// Values captured from earlier results (`capture: {name: path}`), used in later
+// queries as ${name}.
+const captured = {};
 
 // Run a single test
 async function runTest(wasm, test, procId) {
@@ -263,11 +289,17 @@ async function runTest(wasm, test, procId) {
   if (procId) {
     query = query.replace(/\$PROC_ID/g, procId);
   }
+  query = query.replace(/\$\{(\w+)\}/g, (m, name) => (name in captured ? String(captured[name]) : m));
 
   try {
     const resultJson = await wasm.execute(query);
     const result = JSON.parse(resultJson);
     const errors = checkExpectation(result, test.expect, test.id);
+    for (const [name, path] of Object.entries(test.capture ?? {})) {
+      const v = getPath(result, path);
+      if (v === undefined) errors.push(`capture ${name}: ${path} not in the result`);
+      else captured[name] = v;
+    }
 
     return {
       passed: errors.length === 0,
@@ -286,7 +318,7 @@ async function runTest(wasm, test, procId) {
 // Run all test suites
 async function runAllTests() {
   console.log(`${colors.cyan}╔════════════════════════════════════════════════════════════╗${colors.reset}`);
-  console.log(`${colors.cyan}║         AQL v0.5 Conformance Test Suite Runner             ║${colors.reset}`);
+  console.log(`${colors.cyan}║         AQL Conformance Test Suite Runner (v0.5+)          ║${colors.reset}`);
   console.log(`${colors.cyan}╚════════════════════════════════════════════════════════════╝${colors.reset}\n`);
 
   // Load WASM, or use the HTTP server given with --url
@@ -326,6 +358,11 @@ async function runAllTests() {
     const suiteContent = readFileSync(suitePath, 'utf-8');
     const suite = parseYaml(suiteContent);
 
+    // Suites for engine-only statements (v0.6 subscriptions / WATCH / IN SCOPE).
+    if (suite.requires === 'server' && !SERVER_URL) {
+      console.log(`${colors.dim}━━━ ${suite.suite} (${suiteFile}): skipped, needs --url${colors.reset}\n`);
+      continue;
+    }
     console.log(`${colors.cyan}━━━ ${suite.suite} (${suiteFile}) ━━━${colors.reset}`);
 
     let suitePassed = 0;

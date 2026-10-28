@@ -85,6 +85,13 @@ tests:
 | `links_contains` | Links that MUST be present (partial match; numbers within 1e-6) |
 | `links_present` | Whether the returned records carry any links |
 | `links_type_only` | Every returned link has this type |
+| `fields` | Values at dotted paths of the result (`data.type: "snapshot"`, `data.result.data.count: 2`); `${name}` is replaced by a captured value |
+| `fields_exist` | Dotted paths that must be present |
+
+A test may also `capture: {name: path}` a value from its result (a subscription or
+watch id, an offset) for later queries and `fields` as `${name}`. A suite with
+`requires: server` uses engine-only statements (v0.6) and is skipped unless the
+runner targets a server (`node run-tests.mjs --url http://host:port`).
 
 ## Test Categories
 
@@ -107,6 +114,9 @@ tests:
 | 15_scope_namespace | 5 | Isolation tests |
 | 16_dotted_fields | 4 | metadata.namespace, metadata.scope, metadata.version |
 | 17_validation | 8 | All §19 semantic rules |
+| 18_subscriptions | 14 | v0.6: SUBSCRIBE (TOPIC / SCOPE, KINDS, WHERE, FROM), PUBLISH, ACK, UNSUBSCRIBE (server only) |
+| 19_watch | 13 | v0.6: WATCH snapshots (RECALL / LOOKUP / SCAN, ORDER BY, aggregate), DEBOUNCE range, read-only, UNWATCH (server only) |
+| 20_in_scope | 15 | v0.6: IN SCOPE placement, isolation of reads / UPDATE / FORGET, with SCOPE shared, refusals (server only) |
 | 21_edge_cases | 10 | Boundaries, idempotency, type coercion |
 | 22_link_update | 24 | v0.7: UPDATE LINK (weight / type), UNLINK, re-LINK updates the weight |
 
