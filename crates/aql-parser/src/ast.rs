@@ -319,10 +319,13 @@ pub enum Predicate {
     Key { field: String, value: Value },
     /// LIKE $embedding_var
     Like { variable: String },
-    /// PATTERN $pattern_var THRESHOLD 0.7
+    /// PATTERN $pattern_var THRESHOLD 0.7, or PATTERN "text" (v0.7: the spec's
+    /// `"PATTERN" expression`). For a literal, `text` holds it and `variable` repeats it.
     Pattern {
         variable: String,
         threshold: Option<f32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
     },
     /// ALL (match everything)
     All,

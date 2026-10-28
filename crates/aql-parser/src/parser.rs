@@ -451,9 +451,13 @@ fn parse_predicate(pair: pest::iterators::Pair<Rule>) -> ParseResult<Predicate> 
         Rule::pattern_pred => {
             let mut parts = inner.into_inner();
             let var = parts.next().ok_or(ParseError::Missing("variable"))?;
-            let variable = parse_variable_name(var)?;
+            let text = if var.as_rule() == Rule::string_literal { Some(parse_string_literal(var.clone())?) } else { None };
+            let variable = match &text {
+                Some(t) => t.clone(),
+                None => parse_variable_name(var)?,
+            };
             let threshold = parts.next().map(|p| parse_float(p)).transpose()?;
-            Ok(Predicate::Pattern { variable, threshold })
+            Ok(Predicate::Pattern { variable, threshold, text })
         }
         Rule::all_pred => Ok(Predicate::All),
         _ => Err(ParseError::UnexpectedRule(format!("{:?}", inner.as_rule()))),
@@ -1104,15 +1108,26 @@ mod tests {
         let stmt = parse("LOOKUP FROM PROCEDURAL PATTERN $log_events THRESHOLD 0.7").unwrap();
         if let Statement::Lookup(l) = stmt {
             assert_eq!(l.memory_type, MemoryType::Procedural);
-            if let Predicate::Pattern { variable, threshold } = l.predicate {
+            if let Predicate::Pattern { variable, threshold, text } = l.predicate {
                 assert_eq!(variable, "log_events");
                 assert_eq!(threshold, Some(0.7));
+                assert_eq!(text, None);
             } else {
                 panic!("Expected Pattern predicate");
             }
         } else {
             panic!("Expected Lookup statement");
         }
+    }
+
+    #[test]
+    fn test_parse_pattern_literal() {
+        let stmt = parse(r#"LOOKUP FROM PROCEDURAL PATTERN "pod OOMKilled" THRESHOLD 0.5"#).unwrap();
+        let Statement::Lookup(l) = stmt else { panic!("Expected Lookup statement") };
+        let Predicate::Pattern { variable, threshold, text } = l.predicate else { panic!("Expected Pattern predicate") };
+        assert_eq!(text.as_deref(), Some("pod OOMKilled"));
+        assert_eq!(variable, "pod OOMKilled");
+        assert_eq!(threshold, Some(0.5));
     }
 
     #[test]

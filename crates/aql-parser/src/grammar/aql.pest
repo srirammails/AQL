@@ -226,7 +226,7 @@ predicate = {
 where_pred = { ^"WHERE" ~ condition_list }
 key_pred = { ^"KEY" ~ identifier ~ "=" ~ value }
 like_pred = { ^"LIKE" ~ variable }
-pattern_pred = { ^"PATTERN" ~ variable ~ (^"THRESHOLD" ~ float_literal)? }
+pattern_pred = { ^"PATTERN" ~ (variable | string_literal) ~ (^"THRESHOLD" ~ float_literal)? }
 all_pred = { ^"ALL" }
 
 // ============================================================================
