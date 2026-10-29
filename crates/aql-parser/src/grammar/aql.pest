@@ -113,9 +113,14 @@ load_stmt = {
 // ============================================================================
 
 // STORE INTO EPISODIC (incident_id = "inc-001", pod = "payments") TTL 7d
+// v0.8: STORE INTO SEMANTIC FACT [MULTI] (subject = "person:ada", predicate = "works_at",
+//   object = "org:acme" | value = …, confidence = 0.9, source = "chat:1")
 store_stmt = {
-    ^"STORE" ~ ^"INTO" ~ memory_type ~ payload ~ modifier*
+    ^"STORE" ~ ^"INTO" ~ memory_type ~ fact_mod? ~ payload ~ modifier*
 }
+
+fact_mod = { ^"FACT" ~ multi_kw? }
+multi_kw = { ^"MULTI" }
 
 // UPDATE INTO PROCEDURAL WHERE pattern_id = "oom-fix" (confidence = 0.9)
 update_stmt = {

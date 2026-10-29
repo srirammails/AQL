@@ -234,10 +234,21 @@ pub struct LoadStmt {
 pub struct StoreStmt {
     /// Memory type to store into
     pub memory_type: MemoryType,
+    /// v0.8: `STORE INTO SEMANTIC FACT [MULTI]` — the payload is a fact
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fact: Option<FactMode>,
     /// Payload (field assignments)
     pub payload: Vec<FieldAssignment>,
     /// Modifiers
     pub modifiers: Modifiers,
+}
+
+/// v0.8 `FACT [MULTI]`: one current fact per (subject, predicate), or with `MULTI`
+/// one per (subject, predicate, object).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FactMode {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub multi: bool,
 }
 
 /// UPDATE statement

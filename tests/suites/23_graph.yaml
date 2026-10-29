@@ -1,11 +1,11 @@
 # AQL v0.8 draft Test Suite - graph reads
-# Multi-hop FOLLOW LINKS, link direction, MIN_WEIGHT, TYPE IN / ALL
+# Multi-hop FOLLOW LINKS, link direction, MIN_WEIGHT, TYPE IN / ALL, and facts
 # (spec/AQL_SPEC_v0.8_additions.md). Tests run in order; the first ones create
 # the graph: g_a →next→ g_b →next→ g_c →next→ g_d, g_x →next→ g_b, g_a →knows→ g_x.
 
 suite: GRAPH
-spec_section: "v0.8 §1-§5"
-total_tests: 22
+spec_section: "v0.8 §1-§6"
+total_tests: 34
 
 tests:
   - id: T23-01
@@ -210,5 +210,98 @@ tests:
     name: "parse error: TYPE IN needs a list"
     query: |
       RECALL FROM SEMANTIC WHERE concept = "g_a" FOLLOW LINKS TYPE IN "next"
+    expect:
+      success: false
+
+  - id: T23-23
+    name: "FACT: Ada works at Acme"
+    query: |
+      STORE INTO SEMANTIC FACT (subject = "gf:ada", predicate = "works_at", object = "gf:acme", confidence = 0.9)
+    expect:
+      success: true
+
+  - id: T23-24
+    name: "FACT makes the entities at its ends"
+    query: |
+      LOOKUP FROM SEMANTIC KEY id = "gf:acme"
+    expect:
+      success: true
+      count: 1
+
+  - id: T23-25
+    name: "a fact is a link of its predicate"
+    query: |
+      LOOKUP FROM SEMANTIC KEY id = "gf:ada" FOLLOW LINKS TYPE "works_at"
+    expect:
+      success: true
+      count: 1
+      fields:
+        data.records.0.id: "gf:acme"
+
+  - id: T23-26
+    name: "FACT again for (subject, predicate) supersedes"
+    query: |
+      STORE INTO SEMANTIC FACT (subject = "gf:ada", predicate = "works_at", object = "gf:globex")
+    expect:
+      success: true
+
+  - id: T23-27
+    name: "the link moved with it"
+    query: |
+      LOOKUP FROM SEMANTIC KEY id = "gf:ada" FOLLOW LINKS TYPE "works_at"
+    expect:
+      success: true
+      count: 1
+      fields:
+        data.records.0.id: "gf:globex"
+
+  - id: T23-28
+    name: "one current fact"
+    query: |
+      RECALL FROM SEMANTIC WHERE subject = "gf:ada" AND predicate = "works_at"
+    expect:
+      success: true
+      count: 1
+
+  - id: T23-29
+    name: "FACT MULTI keeps one per object"
+    query: |
+      STORE INTO SEMANTIC FACT MULTI (subject = "gf:ada", predicate = "knows", object = "gf:bob")
+    expect:
+      success: true
+
+  - id: T23-30
+    name: "FACT MULTI, second object"
+    query: |
+      STORE INTO SEMANTIC FACT MULTI (subject = "gf:ada", predicate = "knows", object = "gf:cy")
+    expect:
+      success: true
+
+  - id: T23-31
+    name: "both are followed"
+    query: |
+      LOOKUP FROM SEMANTIC KEY id = "gf:ada" FOLLOW LINKS TYPE "knows"
+    expect:
+      success: true
+      count: 2
+
+  - id: T23-32
+    name: "a literal value is not a link"
+    query: |
+      STORE INTO SEMANTIC FACT (subject = "gf:ada", predicate = "born", value = 1815)
+    expect:
+      success: true
+
+  - id: T23-33
+    name: "parse error: FACT needs object or value"
+    query: |
+      STORE INTO SEMANTIC FACT (subject = "gf:ada", predicate = "p")
+    expect:
+      success: false
+
+  - id: T23-34
+    name: "parse error: FACT is SEMANTIC only"
+    query: |
+      STORE INTO EPISODIC FACT (subject = "gf:ada", predicate = "p", object = "gf:x")
     expect:
       success: false

@@ -1,4 +1,4 @@
-# AQL v0.8 — Additions (draft): graph reads
+# AQL v0.8 — Additions (draft): graph reads and facts
 
 > **Date:** 29 Oct 2026 · @Sriram · **Status:** accepted for v0.8; grammar, parser
 > and ADB implemented (ADB `.ai/P1_GRAPH.md`); conformance suite `23_graph.yaml`.
@@ -9,12 +9,15 @@
 > parses as before, and its AST serializes to the same JSON.
 
 Before v0.8, `FOLLOW LINKS` and `WITH LINKS` read one type of outgoing link, and
-`DEPTH` was parsed but not defined. v0.8 defines multi-hop traversal and lets both
-modifiers choose links by type, direction and weight.
+`DEPTH` was parsed but not defined. v0.8 defines multi-hop traversal, lets both
+modifiers choose links by type, direction and weight, and adds facts: SEMANTIC
+records that say *subject predicate object* and are links of their predicate.
 
 ## 1. Grammar (BNF)
 
 ```bnf
+store_stmt       ::= "STORE" "INTO" memory_type ("FACT" "MULTI"?)? payload modifier*
+
 with_links_mod   ::= "WITH" "LINKS" link_select link_direction? min_weight?
 follow_links_mod ::= "FOLLOW" "LINKS" link_select? link_direction? min_weight?
                      ("DEPTH" integer)?
@@ -79,4 +82,33 @@ RECALL FROM PROCEDURAL WHERE pattern = "oom" FOLLOW LINKS TYPE "applied_to" MIN_
 
 ```sql
 RECALL FROM SEMANTIC WHERE concept = "ada" FOLLOW LINKS TYPE IN ("knows", "works_with") DEPTH 2
+```
+
+## 6. Facts
+
+```sql
+STORE INTO SEMANTIC FACT (subject = "person:ada", predicate = "works_at",
+                          object = "org:acme", confidence = 0.9, source = "chat:42")
+STORE INTO SEMANTIC FACT MULTI (subject = "person:ada", predicate = "knows", object = "person:bob")
+STORE INTO SEMANTIC FACT (subject = "person:ada", predicate = "born", value = 1815)
+```
+
+- `FACT` is valid on SEMANTIC only. The payload needs a `subject` and a `predicate`
+  (strings: entity keys and a relation name) and exactly one of `object` (an entity
+  key) and `value` (any literal). Other fields are kept; `confidence` defaults to 1.
+- **One current fact per (subject, predicate)**: storing another supersedes the old
+  one (its history is kept, as for UPDATE). With `MULTI`, one per (subject,
+  predicate, object or value), for relations that hold several values.
+- **Entities**: an entity is a SEMANTIC record keyed by its id (e.g. `person:ada`).
+  Storing a fact creates the entities at its ends when they don't exist.
+- **A fact with an `object` is a link** from subject to object, of type `predicate`,
+  weight `confidence`: `FOLLOW LINKS` / `WITH LINKS` read it like any other link. A
+  fact with a `value` is not a link. Superseding or forgetting the fact changes the
+  link; `UPDATE LINK` and `UNLINK` don't apply to it.
+- Facts are records: `RECALL FROM SEMANTIC WHERE subject = "person:ada"` returns them,
+  and `LIKE` finds them by `content` (default: "subject predicate object").
+
+```sql
+LOOKUP FROM SEMANTIC KEY id = "person:ada" FOLLOW LINKS TYPE IN ("works_at", "based_in") DEPTH 2
+LOOKUP FROM SEMANTIC KEY id = "org:acme" FOLLOW LINKS TYPE "works_at" INBOUND   -- who works there
 ```

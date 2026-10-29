@@ -271,7 +271,16 @@ fn parse_store(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
     let mut inner = pair.into_inner();
 
     let memory_type = parse_memory_type(inner.next().ok_or(ParseError::Missing("memory type"))?)?;
-    let payload = parse_payload(inner.next().ok_or(ParseError::Missing("payload"))?)?;
+    let mut next = inner.next().ok_or(ParseError::Missing("payload"))?;
+    let mut fact = None;
+    if next.as_rule() == Rule::fact_mod {
+        fact = Some(FactMode { multi: next.into_inner().any(|p| p.as_rule() == Rule::multi_kw) });
+        next = inner.next().ok_or(ParseError::Missing("payload"))?;
+    }
+    let payload = parse_payload(next)?;
+    if fact.is_some() {
+        check_fact(memory_type, &payload)?;
+    }
 
     let mut modifiers = Modifiers::default();
     for item in inner {
@@ -282,9 +291,31 @@ fn parse_store(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
 
     Ok(Statement::Store(StoreStmt {
         memory_type,
+        fact,
         payload,
         modifiers,
     }))
+}
+
+/// v0.8 §6: a fact is SEMANTIC, with a string `subject` and `predicate` and exactly
+/// one of `object` (an entity key, string) and `value` (a literal).
+fn check_fact(memory_type: MemoryType, payload: &[FieldAssignment]) -> ParseResult<()> {
+    if memory_type != MemoryType::Semantic {
+        return Err(ParseError::Validation("FACT is only valid on SEMANTIC".into()));
+    }
+    let get = |f: &str| payload.iter().find(|a| a.field == f).map(|a| &a.value);
+    for f in ["subject", "predicate"] {
+        if !matches!(get(f), Some(Value::String(s)) if !s.is_empty()) && !matches!(get(f), Some(Value::Variable(_))) {
+            return Err(ParseError::Validation(format!("FACT needs {f} = \"…\"")));
+        }
+    }
+    match (get("object"), get("value")) {
+        (Some(Value::String(s)), None) if !s.is_empty() => Ok(()),
+        (Some(Value::Variable(_)), None) => Ok(()),
+        (None, Some(_)) => Ok(()),
+        (Some(_), None) => Err(ParseError::Validation("FACT object is an entity key: object = \"…\"".into())),
+        _ => Err(ParseError::Validation("FACT needs exactly one of object = \"entity key\" and value = …".into())),
+    }
 }
 
 /// Parse UPDATE statement
@@ -1614,5 +1645,32 @@ mod tests {
         };
         assert_eq!(serde_json::to_value(&r.modifiers.with_links).unwrap(), serde_json::json!({ "type": "all" }));
         assert_eq!(serde_json::to_value(&r.modifiers.follow_links).unwrap(), serde_json::json!({ "link_type": "t", "depth": null }));
+    }
+
+    #[test]
+    fn test_v08_store_fact() {
+        let Statement::Store(st) = parse(r#"STORE INTO SEMANTIC FACT (subject = "person:ada", predicate = "works_at", object = "org:acme", confidence = 0.9)"#).unwrap() else {
+            panic!()
+        };
+        assert_eq!(st.fact, Some(FactMode { multi: false }));
+        let Statement::Store(st) = parse(r#"STORE INTO SEMANTIC FACT MULTI (subject = "person:ada", predicate = "knows", object = "person:bob")"#).unwrap() else {
+            panic!()
+        };
+        assert_eq!(st.fact, Some(FactMode { multi: true }));
+        assert!(parse(r#"STORE INTO SEMANTIC FACT (subject = "a", predicate = "born", value = 1815)"#).is_ok());
+        assert!(parse(r#"STORE INTO SEMANTIC FACT (subject = $s, predicate = $p, object = $o)"#).is_ok());
+        for bad in [
+            r#"STORE INTO EPISODIC FACT (subject = "a", predicate = "p", object = "b")"#,
+            r#"STORE INTO SEMANTIC FACT (subject = "a", object = "b")"#,
+            r#"STORE INTO SEMANTIC FACT (subject = "a", predicate = "p")"#,
+            r#"STORE INTO SEMANTIC FACT (subject = "a", predicate = "p", object = "b", value = 1)"#,
+            r#"STORE INTO SEMANTIC FACT (subject = "a", predicate = "p", object = 3)"#,
+        ] {
+            assert!(parse(bad).is_err(), "{bad}");
+        }
+        // Without FACT: as before (and the AST JSON has no `fact`).
+        let Statement::Store(st) = parse(r#"STORE INTO SEMANTIC (key = "k", subject = "x")"#).unwrap() else { panic!() };
+        assert!(st.fact.is_none());
+        assert!(serde_json::to_value(&st).unwrap().get("fact").is_none());
     }
 }
