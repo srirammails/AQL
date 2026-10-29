@@ -1,0 +1,214 @@
+# AQL v0.8 draft Test Suite - graph reads
+# Multi-hop FOLLOW LINKS, link direction, MIN_WEIGHT, TYPE IN / ALL
+# (spec/AQL_SPEC_v0.8_additions.md). Tests run in order; the first ones create
+# the graph: g_a →next→ g_b →next→ g_c →next→ g_d, g_x →next→ g_b, g_a →knows→ g_x.
+
+suite: GRAPH
+spec_section: "v0.8 §1-§5"
+total_tests: 22
+
+tests:
+  - id: T23-01
+    name: "setup: record g_a"
+    query: |
+      STORE INTO SEMANTIC (key = "g-a", concept = "g_a")
+    expect:
+      success: true
+
+  - id: T23-02
+    name: "setup: record g_b"
+    query: |
+      STORE INTO SEMANTIC (key = "g-b", concept = "g_b")
+    expect:
+      success: true
+
+  - id: T23-03
+    name: "setup: record g_c"
+    query: |
+      STORE INTO SEMANTIC (key = "g-c", concept = "g_c")
+    expect:
+      success: true
+
+  - id: T23-04
+    name: "setup: record g_d"
+    query: |
+      STORE INTO SEMANTIC (key = "g-d", concept = "g_d")
+    expect:
+      success: true
+
+  - id: T23-05
+    name: "setup: record g_x"
+    query: |
+      STORE INTO SEMANTIC (key = "g-x", concept = "g_x")
+    expect:
+      success: true
+
+  - id: T23-06
+    name: "setup: LINK g_a → g_b (next)"
+    query: |
+      LINK FROM SEMANTIC WHERE concept = "g_a" TO SEMANTIC WHERE concept = "g_b" TYPE "next" WEIGHT 1.0
+    expect:
+      success: true
+      count: 1
+
+  - id: T23-07
+    name: "setup: LINK g_b → g_c (next)"
+    query: |
+      LINK FROM SEMANTIC WHERE concept = "g_b" TO SEMANTIC WHERE concept = "g_c" TYPE "next" WEIGHT 0.5
+    expect:
+      success: true
+      count: 1
+
+  - id: T23-08
+    name: "setup: LINK g_c → g_d (next)"
+    query: |
+      LINK FROM SEMANTIC WHERE concept = "g_c" TO SEMANTIC WHERE concept = "g_d" TYPE "next" WEIGHT 0.5
+    expect:
+      success: true
+      count: 1
+
+  - id: T23-09
+    name: "setup: LINK g_x → g_b (next)"
+    query: |
+      LINK FROM SEMANTIC WHERE concept = "g_x" TO SEMANTIC WHERE concept = "g_b" TYPE "next" WEIGHT 0.4
+    expect:
+      success: true
+      count: 1
+
+  - id: T23-10
+    name: "setup: LINK g_a → g_x (knows)"
+    query: |
+      LINK FROM SEMANTIC WHERE concept = "g_a" TO SEMANTIC WHERE concept = "g_x" TYPE "knows" WEIGHT 0.9
+    expect:
+      success: true
+      count: 1
+
+  - id: T23-11
+    name: "DEPTH 1 (default): one hop"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "g_a" FOLLOW LINKS TYPE "next"
+    expect:
+      success: true
+      count: 1
+      fields:
+        data.records.0.data.concept: "g_b"
+
+  - id: T23-12
+    name: "DEPTH 3: every record within 3 hops, nearest first (v0.8 §2)"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "g_a" FOLLOW LINKS TYPE "next" DEPTH 3
+    expect:
+      success: true
+      count: 3
+      fields:
+        data.records.0.data.concept: "g_b"
+        data.records.1.data.concept: "g_c"
+        data.records.2.data.concept: "g_d"
+        data.records.2.data._hop: 3
+        data.records.2.data._path_weight: 0.25
+
+  - id: T23-13
+    name: "cycle-safe: g_b ← g_x ← g_a is not revisited"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "g_a" FOLLOW LINKS ALL DEPTH 5
+    expect:
+      success: true
+      count: 4
+      fields:
+        data.records.0.data.concept: "g_b"
+        data.records.1.data.concept: "g_x"
+        data.records.2.data.concept: "g_c"
+        data.records.3.data.concept: "g_d"
+
+  - id: T23-14
+    name: "INBOUND: who links to g_b (v0.8 §3)"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "g_b" FOLLOW LINKS TYPE "next" INBOUND
+    expect:
+      success: true
+      count: 2
+      fields:
+        data.records.0.data.concept: "g_a"
+        data.records.1.data.concept: "g_x"
+
+  - id: T23-15
+    name: "BOTH: either way, by link weight"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "g_b" FOLLOW LINKS TYPE "next" BOTH
+    expect:
+      success: true
+      count: 3
+      fields:
+        data.records.0.data.concept: "g_a"
+        data.records.1.data.concept: "g_c"
+        data.records.2.data.concept: "g_x"
+
+  - id: T23-16
+    name: "MIN_WEIGHT drops light links (v0.8 §4)"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "g_b" FOLLOW LINKS TYPE "next" INBOUND MIN_WEIGHT 0.5
+    expect:
+      success: true
+      count: 1
+      fields:
+        data.records.0.data.concept: "g_a"
+
+  - id: T23-17
+    name: "TYPE IN picks several types"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "g_a" FOLLOW LINKS TYPE IN ("next", "knows")
+    expect:
+      success: true
+      count: 2
+      fields:
+        data.records.0.data.concept: "g_b"
+        data.records.1.data.concept: "g_x"
+
+  - id: T23-18
+    name: "no type: every type"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "g_a" FOLLOW LINKS 
+    expect:
+      success: true
+      count: 2
+      fields:
+        data.records.0.data.concept: "g_b"
+        data.records.1.data.concept: "g_x"
+
+  - id: T23-19
+    name: "LOOKUP … FOLLOW LINKS returns the linked records"
+    query: |
+      LOOKUP FROM SEMANTIC KEY id = "g-a" FOLLOW LINKS TYPE "next" DEPTH 2
+    expect:
+      success: true
+      count: 2
+      fields:
+        data.records.0.data.concept: "g_b"
+        data.records.1.data.concept: "g_c"
+
+  - id: T23-20
+    name: "WITH LINKS INBOUND lists links pointing at the record"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "g_b" WITH LINKS ALL INBOUND
+    expect:
+      success: true
+      count: 1
+      links_count: 2
+
+  - id: T23-21
+    name: "WITH LINKS TYPE IN … MIN_WEIGHT"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "g_a" WITH LINKS TYPE IN ("knows") MIN_WEIGHT 0.5
+    expect:
+      success: true
+      count: 1
+      links_count: 1
+      links_contains:
+        - link_type: "knows"
+
+  - id: T23-22
+    name: "parse error: TYPE IN needs a list"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "g_a" FOLLOW LINKS TYPE IN "next"
+    expect:
+      success: false

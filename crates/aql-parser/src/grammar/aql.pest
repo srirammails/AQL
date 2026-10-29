@@ -323,10 +323,22 @@ agg_func_name = { ^"COUNT" | ^"AVG" | ^"SUM" | ^"MIN" | ^"MAX" }
 having_mod = { ^"HAVING" ~ condition_list }
 
 // WITH LINKS ALL | WITH LINKS TYPE "applied_to"
-with_links_mod = { ^"WITH" ~ ^"LINKS" ~ (^"ALL" | (^"TYPE" ~ string_literal)) }
+// v0.8: TYPE IN ("a", "b"), INBOUND / BOTH, MIN_WEIGHT 0.5
+with_links_mod = { ^"WITH" ~ ^"LINKS" ~ link_select ~ link_direction? ~ min_weight_mod? }
 
 // FOLLOW LINKS TYPE "triggers"
-follow_links_mod = { ^"FOLLOW" ~ ^"LINKS" ~ ^"TYPE" ~ string_literal ~ (^"DEPTH" ~ integer_literal)? }
+// v0.8: FOLLOW LINKS [ALL | TYPE "t" | TYPE IN (...)] [OUTBOUND | INBOUND | BOTH]
+//   [MIN_WEIGHT w] [DEPTH n]; no type = every type
+follow_links_mod = {
+    ^"FOLLOW" ~ ^"LINKS" ~ link_select? ~ link_direction? ~ min_weight_mod? ~ (^"DEPTH" ~ integer_literal)?
+}
+
+link_select = { link_types_all | link_types_in | link_type_one }
+link_types_all = { ^"ALL" }
+link_types_in = { ^"TYPE" ~ ^"IN" ~ "(" ~ string_literal ~ ("," ~ string_literal)* ~ ")" }
+link_type_one = { ^"TYPE" ~ string_literal }
+link_direction = { ^"OUTBOUND" | ^"INBOUND" | ^"BOTH" }
+min_weight_mod = { ^"MIN_WEIGHT" ~ (float_literal | integer_literal) }
 
 // WINDOW LAST 10 | WINDOW LAST 30s | WINDOW TOP 3 BY attention_weight | WINDOW SINCE event_id = "inc-001"
 window_mod = {

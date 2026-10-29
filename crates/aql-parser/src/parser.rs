@@ -731,28 +731,66 @@ fn parse_aggregate_func(pair: pest::iterators::Pair<Rule>) -> ParseResult<Aggreg
     Ok(AggregateFunc { func, field, alias })
 }
 
+/// The parts of a v0.8 link selection: `ALL` / `TYPE "t"` / `TYPE IN (...)`, the
+/// direction and `MIN_WEIGHT`, in any of WITH / FOLLOW LINKS.
+#[derive(Default)]
+struct LinkParts {
+    link_type: Option<String>,
+    link_types: Vec<String>,
+    direction: LinkDirection,
+    min_weight: Option<f64>,
+    depth: Option<u32>,
+}
+
+fn parse_link_parts(pair: pest::iterators::Pair<Rule>) -> ParseResult<LinkParts> {
+    let mut parts = LinkParts::default();
+    for p in pair.into_inner() {
+        match p.as_rule() {
+            Rule::link_select => {
+                let sel = p.into_inner().next().ok_or(ParseError::Missing("link type"))?;
+                match sel.as_rule() {
+                    Rule::link_type_one => {
+                        let lit = sel.into_inner().next().ok_or(ParseError::Missing("link type"))?;
+                        parts.link_type = Some(parse_string_literal(lit)?);
+                    }
+                    Rule::link_types_in => {
+                        parts.link_types = sel.into_inner().map(parse_string_literal).collect::<ParseResult<_>>()?;
+                    }
+                    _ => {}
+                }
+            }
+            Rule::link_direction => {
+                parts.direction = match p.as_str().to_ascii_uppercase().as_str() {
+                    "INBOUND" => LinkDirection::Inbound,
+                    "BOTH" => LinkDirection::Both,
+                    _ => LinkDirection::Outbound,
+                };
+            }
+            Rule::min_weight_mod => {
+                let n = p.into_inner().next().ok_or(ParseError::Missing("MIN_WEIGHT value"))?;
+                parts.min_weight = Some(n.as_str().parse().map_err(|_| ParseError::Missing("MIN_WEIGHT number"))?);
+            }
+            Rule::integer_literal => parts.depth = Some(parse_integer(p)? as u32),
+            _ => {}
+        }
+    }
+    Ok(parts)
+}
+
 /// Parse WITH LINKS modifier
 fn parse_with_links(pair: pest::iterators::Pair<Rule>) -> ParseResult<WithLinks> {
-    let inner = pair.into_inner().next();
-
-    match inner {
-        Some(p) if p.as_rule() == Rule::string_literal => {
-            Ok(WithLinks::Type {
-                link_type: parse_string_literal(p)?,
-            })
-        }
-        _ => Ok(WithLinks::All),
-    }
+    let LinkParts { link_type, link_types, direction, min_weight, .. } = parse_link_parts(pair)?;
+    Ok(match link_type {
+        Some(link_type) => WithLinks::Type { link_type, direction, min_weight },
+        None if !link_types.is_empty() => WithLinks::Types { link_types, direction, min_weight },
+        None => WithLinks::All { direction, min_weight },
+    })
 }
 
 /// Parse FOLLOW LINKS modifier
 fn parse_follow_links(pair: pest::iterators::Pair<Rule>) -> ParseResult<FollowLinks> {
-    let mut inner = pair.into_inner();
-
-    let link_type = parse_string_literal(inner.next().ok_or(ParseError::Missing("link type"))?)?;
-    let depth = inner.next().map(|p| parse_integer(p)).transpose()?.map(|n| n as u32);
-
-    Ok(FollowLinks { link_type, depth })
+    let LinkParts { link_type, link_types, direction, min_weight, depth } = parse_link_parts(pair)?;
+    Ok(FollowLinks { link_type, link_types, direction, min_weight, depth })
 }
 
 /// Parse WINDOW modifier
@@ -1240,7 +1278,7 @@ mod tests {
             assert_eq!(r.sources.len(), 2);
             assert!(matches!(
                 r.with_links,
-                Some(WithLinks::Type { link_type }) if link_type == "applied_to"
+                Some(WithLinks::Type { link_type, .. }) if link_type == "applied_to"
             ));
         } else {
             panic!("Expected Reflect statement");
@@ -1539,5 +1577,42 @@ mod tests {
             assert!(msg.contains("WHERE predicate"), "{q}: {msg}");
         }
         assert!(parse(r#"FORGET FROM WORKING WHERE a = "b""#).is_ok());
+    }
+
+    #[test]
+    fn test_v08_follow_links_selection() {
+        let follow = |q: &str| {
+            let Statement::Recall(r) = parse(q).unwrap() else { panic!("{q}") };
+            r.modifiers.follow_links.unwrap()
+        };
+        let f = follow(r#"RECALL FROM SEMANTIC WHERE a = 1 FOLLOW LINKS TYPE "t" DEPTH 2"#);
+        assert_eq!((f.link_type.as_deref(), f.direction, f.min_weight, f.depth), (Some("t"), LinkDirection::Outbound, None, Some(2)));
+        let f = follow(r#"RECALL FROM SEMANTIC WHERE a = 1 FOLLOW LINKS TYPE IN ("a", "b") INBOUND MIN_WEIGHT 0.5 DEPTH 3"#);
+        assert_eq!(f.link_types, ["a", "b"]);
+        assert_eq!((f.link_type, f.direction, f.min_weight, f.depth), (None, LinkDirection::Inbound, Some(0.5), Some(3)));
+        let f = follow(r#"RECALL FROM SEMANTIC WHERE a = 1 FOLLOW LINKS BOTH"#);
+        assert_eq!((f.link_type, f.link_types.len(), f.direction), (None, 0, LinkDirection::Both));
+        let f = follow(r#"RECALL FROM SEMANTIC WHERE a = 1 FOLLOW LINKS ALL MIN_WEIGHT 1"#);
+        assert_eq!((f.link_type, f.min_weight), (None, Some(1.0)));
+    }
+
+    #[test]
+    fn test_v08_with_links_selection() {
+        let Statement::Lookup(l) = parse(r#"LOOKUP FROM SEMANTIC KEY id = "a" WITH LINKS TYPE IN ("x") BOTH MIN_WEIGHT 0.2"#).unwrap() else {
+            panic!()
+        };
+        assert_eq!(
+            l.modifiers.with_links,
+            Some(WithLinks::Types { link_types: vec!["x".into()], direction: LinkDirection::Both, min_weight: Some(0.2) })
+        );
+    }
+
+    #[test]
+    fn test_v08_old_link_ast_json_unchanged() {
+        let Statement::Recall(r) = parse(r#"RECALL FROM SEMANTIC WHERE a = 1 WITH LINKS ALL FOLLOW LINKS TYPE "t""#).unwrap() else {
+            panic!()
+        };
+        assert_eq!(serde_json::to_value(&r.modifiers.with_links).unwrap(), serde_json::json!({ "type": "all" }));
+        assert_eq!(serde_json::to_value(&r.modifiers.follow_links).unwrap(), serde_json::json!({ "link_type": "t", "depth": null }));
     }
 }

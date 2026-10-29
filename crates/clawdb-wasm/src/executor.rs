@@ -94,7 +94,7 @@ fn execute_recall(stmt: &RecallStmt, store: &mut MemoryStore) -> QueryResult {
             .filter_map(|v| v.get("id").and_then(|id| id.as_str()).map(|s| s.to_string()))
             .collect();
         let depth = follow.depth.unwrap_or(1);
-        let linked = store.follow_links(&source_ids, &follow.link_type, depth);
+        let linked = store.follow_links(&source_ids, follow.link_type.as_deref(), depth);
         let linked_values: Vec<Value> = linked.iter()
             .map(|r| serde_json::to_value(r).unwrap())
             .collect();
@@ -535,8 +535,13 @@ fn execute_reflect(stmt: &ReflectStmt, store: &mut MemoryStore) -> QueryResult {
         for record in &all_records {
             if let Some(id) = record.get("id").and_then(|v| v.as_str()) {
                 let record_links = match with_links {
-                    WithLinks::All => store.get_links_from(id, None),
-                    WithLinks::Type { link_type } => store.get_links_from(id, Some(link_type)),
+                    WithLinks::All { .. } => store.get_links_from(id, None),
+                    WithLinks::Type { link_type, .. } => store.get_links_from(id, Some(link_type)),
+                    WithLinks::Types { link_types, .. } => store
+                        .get_links_from(id, None)
+                        .into_iter()
+                        .filter(|l| link_types.contains(&l.link_type))
+                        .collect(),
                 };
                 for link in record_links {
                     links.push(serde_json::to_value(link).unwrap());
@@ -554,7 +559,7 @@ fn execute_reflect(stmt: &ReflectStmt, store: &mut MemoryStore) -> QueryResult {
             .filter_map(|r| r.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
             .collect();
         let depth = follow.depth.unwrap_or(1);
-        let linked = store.follow_links(&source_ids, &follow.link_type, depth);
+        let linked = store.follow_links(&source_ids, follow.link_type.as_deref(), depth);
         let linked_values: Vec<Value> = linked.iter()
             .map(|r| serde_json::to_value(r).unwrap())
             .collect();
@@ -681,10 +686,14 @@ fn query_records(
         records.iter().map(|r| {
             let mut record_json = serde_json::to_value(r).unwrap();
             let links: Vec<Value> = match with_links {
-                WithLinks::All => r.get_all_links().iter()
+                WithLinks::All { .. } => r.get_all_links().iter()
                     .map(|l| serde_json::to_value(l).unwrap())
                     .collect(),
-                WithLinks::Type { link_type } => r.get_links_by_type(link_type).iter()
+                WithLinks::Type { link_type, .. } => r.get_links_by_type(link_type).iter()
+                    .map(|l| serde_json::to_value(l).unwrap())
+                    .collect(),
+                WithLinks::Types { link_types, .. } => r.get_all_links().iter()
+                    .filter(|l| link_types.contains(&l.link_type))
                     .map(|l| serde_json::to_value(l).unwrap())
                     .collect(),
             };

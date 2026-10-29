@@ -612,18 +612,67 @@ impl AggregateFuncType {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WithLinks {
     /// Include all links
-    All,
+    All {
+        /// v0.8: which way the links point
+        #[serde(default, skip_serializing_if = "LinkDirection::is_outbound")]
+        direction: LinkDirection,
+        /// v0.8: only links at least this heavy
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min_weight: Option<f64>,
+    },
     /// Include links of specific type
-    Type { link_type: String },
+    Type {
+        link_type: String,
+        #[serde(default, skip_serializing_if = "LinkDirection::is_outbound")]
+        direction: LinkDirection,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min_weight: Option<f64>,
+    },
+    /// v0.8: include links of any of these types (`TYPE IN (...)`)
+    Types {
+        link_types: Vec<String>,
+        #[serde(default, skip_serializing_if = "LinkDirection::is_outbound")]
+        direction: LinkDirection,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min_weight: Option<f64>,
+    },
 }
 
 /// FOLLOW LINKS modifier
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FollowLinks {
-    /// Link type to follow
-    pub link_type: String,
+    /// Link type to follow (`None`: every type, or the types in `link_types`)
+    pub link_type: Option<String>,
+    /// v0.8: `TYPE IN (...)`
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub link_types: Vec<String>,
+    /// v0.8: which way the links point
+    #[serde(default, skip_serializing_if = "LinkDirection::is_outbound")]
+    pub direction: LinkDirection,
+    /// v0.8: only links at least this heavy
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_weight: Option<f64>,
     /// Maximum depth
     pub depth: Option<u32>,
+}
+
+/// Which way the links a WITH / FOLLOW LINKS reads point (v0.8).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkDirection {
+    /// Links leaving the record (the only kind before v0.8)
+    #[default]
+    Outbound,
+    /// Links pointing at the record
+    Inbound,
+    /// Both
+    Both,
+}
+
+impl LinkDirection {
+    pub fn is_outbound(&self) -> bool {
+        *self == Self::Outbound
+    }
 }
 
 /// Window specification

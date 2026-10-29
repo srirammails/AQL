@@ -182,7 +182,7 @@ impl Executor {
 
         // Handle FOLLOW LINKS
         if let Some(follow) = &stmt.modifiers.follow_links {
-            records = self.follow_links(&records, backends, links, &follow.link_type, follow.depth).await?;
+            records = self.follow_links(&records, backends, links, follow.link_type.as_deref(), follow.depth).await?;
         }
 
         let count = records.len();
@@ -199,7 +199,7 @@ impl Executor {
         source_records: &[MemoryRecord],
         backends: &HashMap<MemoryType, Arc<LanceBackend>>,
         links: &Arc<RwLock<LinksStorage>>,
-        link_type: &str,
+        link_type: Option<&str>,
         _depth: Option<u32>,
     ) -> ClawResult<Vec<MemoryRecord>> {
         let links_guard = links.read().await;
@@ -208,7 +208,7 @@ impl Executor {
         // Find links from source records with matching type
         let matching_links: Vec<&Link> = links_guard
             .iter()
-            .filter(|l| source_ids.contains(&l.source_id.as_str()) && l.link_type == link_type)
+            .filter(|l| source_ids.contains(&l.source_id.as_str()) && link_type.map_or(true, |t| l.link_type == t))
             .collect();
 
         if matching_links.is_empty() {
