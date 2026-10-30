@@ -1,0 +1,111 @@
+# AQL v0.10 draft Test Suite - MERGE ENTITY
+# A duplicate entity's facts and links move to the survivor, its key becomes an
+# alias (spec/AQL_SPEC_v0.10_additions.md §4).
+
+suite: MERGE
+spec_section: "v0.10"
+total_tests: 13
+
+tests:
+  - id: T28-01
+    name: "setup: the survivor"
+    query: |
+      STORE INTO SEMANTIC (key = "t28:ada", name = "Ada")
+    expect:
+      success: true
+
+  - id: T28-02
+    name: "setup: a fact about the duplicate"
+    query: |
+      STORE INTO SEMANTIC FACT (subject = "t28:lovelace", predicate = "wrote", object = "t28:notes")
+    expect:
+      success: true
+
+  - id: T28-03
+    name: "setup: a fact pointing at the duplicate"
+    query: |
+      STORE INTO SEMANTIC FACT (subject = "t28:bob", predicate = "knows", object = "t28:lovelace")
+    expect:
+      success: true
+
+  - id: T28-04
+    name: "merge: two facts move"
+    query: |
+      MERGE ENTITY "t28:lovelace" INTO "t28:ada"
+    expect:
+      success: true
+      count: 2
+
+  - id: T28-05
+    name: "the facts are about the survivor"
+    query: |
+      RECALL FROM SEMANTIC WHERE subject = "t28:ada"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.object": "t28:notes"}
+
+  - id: T28-06
+    name: "a fact's object moves too"
+    query: |
+      RECALL FROM SEMANTIC WHERE subject = "t28:bob" AND predicate = "knows"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.object": "t28:ada"}
+
+  - id: T28-07
+    name: "the duplicate is gone"
+    query: |
+      RECALL FROM SEMANTIC WHERE subject = "t28:lovelace"
+    expect:
+      success: true
+      count: 0
+
+  - id: T28-08
+    name: "LOOKUP KEY by the alias finds the survivor"
+    query: |
+      LOOKUP FROM SEMANTIC KEY id = "t28:lovelace"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.id": "t28:ada", "data.records.0.data.aliases.0": "t28:lovelace"}
+
+  - id: T28-09
+    name: "a fact stored with the alias is about the survivor"
+    query: |
+      STORE INTO SEMANTIC FACT (subject = "t28:lovelace", predicate = "age", value = 36)
+    expect:
+      success: true
+
+  - id: T28-09b
+    name: "... and recalled as such"
+    query: |
+      RECALL FROM SEMANTIC WHERE subject = "t28:ada" AND predicate = "age"
+    expect:
+      success: true
+      count: 1
+
+  - id: T28-10
+    name: "the alias can't be stored as an entity"
+    query: |
+      STORE INTO SEMANTIC (key = "t28:lovelace", name = "again")
+    expect:
+      success: false
+      error_contains: "was merged into t28:ada"
+
+  - id: T28-11
+    name: "MERGE needs two different entities"
+    query: |
+      MERGE ENTITY "t28:ada" INTO "t28:ada"
+    expect:
+      success: false
+      error_contains: "two different entities"
+
+  - id: T28-12
+    name: "MERGE needs the duplicate to exist"
+    query: |
+      MERGE ENTITY "t28:nobody" INTO "t28:ada"
+    expect:
+      success: false
+      error_contains: "no entity t28:nobody"

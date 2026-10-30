@@ -26,6 +26,7 @@ statement = {
   | forget_stmt
   | link_stmt
   | unlink_stmt
+  | merge_stmt
   | subscribe_stmt
   | unsubscribe_stmt
   | ack_stmt
@@ -164,6 +165,11 @@ unlink_stmt = {
     ^"TO" ~ memory_type ~ ^"WHERE" ~ condition_list ~
     link_type_filter?
 }
+
+// v0.10: merge a duplicate entity into another (SEMANTIC); the duplicate's key
+// becomes an alias of the survivor.
+// MERGE ENTITY "person:ada-lovelace" INTO "person:ada"
+merge_stmt = { ^"MERGE" ~ ^"ENTITY" ~ string_literal ~ ^"INTO" ~ string_literal }
 
 link_type_filter = { ^"TYPE" ~ string_literal }
 link_weight_set = { ^"WEIGHT" ~ float_literal }

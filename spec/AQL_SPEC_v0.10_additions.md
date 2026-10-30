@@ -2,7 +2,7 @@
 
 > **Date:** 30 Oct 2026 · @Sriram · **Status:** draft; implemented in the grammar,
 > parser and ADB; conformance suite `27_time.yaml`. ClawDB and the WASM playground
-> reject `AS OF`, `VALID AT` and `WITH HISTORY`.
+> reject `AS OF`, `VALID AT`, `WITH HISTORY` and `MERGE ENTITY` (suite `28_merge.yaml`).
 > **Extends:** [`AQL_SPEC_v0.5.md`](AQL_SPEC_v0.5.md) and the v0.6–v0.9 additions.
 > Every older statement parses as before, and its AST serializes to the same JSON.
 
@@ -94,6 +94,37 @@ Forgetting a fact leaves its entities.
 FORGET FROM SEMANTIC WHERE key = "person:ada"   -- the entity and its facts
 ```
 
+## 4. Merging entities: `MERGE ENTITY`
+
+```bnf
+merge_stmt ::= "MERGE" "ENTITY" string_literal "INTO" string_literal
+```
+
+```sql
+MERGE ENTITY "person:ada-lovelace" INTO "person:ada"
+```
+
+Two keys turned out to name one thing. `MERGE ENTITY dup INTO survivor` (SEMANTIC
+entities, in one write):
+
+- Every current fact with `dup` as subject or object becomes a fact with `survivor`
+  there instead (its payload's `subject` / `object`, its key, and a default `content`
+  to match). When the survivor already has a fact for that key (single-valued: the
+  same subject and predicate), **the newer of the two is current** and the older
+  becomes its history (`WITH HISTORY`). A moved fact's own earlier versions are not
+  kept.
+- Links to and from `dup` move to `survivor` (not a link the survivor already has,
+  nor one from the survivor to itself).
+- `dup` is forgotten. Its key becomes an **alias** of the survivor: the survivor's
+  `aliases` field lists it (and `dup`'s own aliases); fields `dup` had and the
+  survivor didn't are added to the survivor.
+- After the merge, a `STORE … FACT` naming an alias as subject or object stores it
+  about the survivor, and `LOOKUP FROM SEMANTIC KEY id = alias` returns the survivor.
+  Other reads match keys as stored. `STORE INTO SEMANTIC (key = alias, …)` is an error.
+- The count is the facts and links moved (not those the survivor's newer facts
+  replaced). Errors: either key isn't an entity, `dup` is already an alias, or both
+  name the same entity (after resolving `survivor`'s aliases).
+
 ## Validation (additions to v0.5 §19)
 
 ```
@@ -106,6 +137,8 @@ On SEMANTIC and PROCEDURAL only:
 VALID AT on SEMANTIC only:
   RECALL FROM PROCEDURAL … VALID AT "2026-01-01" → error: "VALID AT is only valid on
   SEMANTIC"
+MERGE ENTITY needs two different keys:
+  MERGE ENTITY "a" INTO "a" → error: "MERGE needs two different entities"
 ```
 
 `AS OF` after an aggregate is the modifier, not an alias: `AGGREGATE COUNT(*) AS OF 1d

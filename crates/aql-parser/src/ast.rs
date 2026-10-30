@@ -32,6 +32,8 @@ pub enum Statement {
     UpdateLink(UpdateLinkStmt),
     /// UNLINK FROM ... TO ... [TYPE "t"]  (v0.7)
     Unlink(UnlinkStmt),
+    /// MERGE ENTITY "dup" INTO "survivor"  (v0.10)
+    Merge(MergeStmt),
     /// SUBSCRIBE SCOPE|TOPIC "..." [KINDS ...] [WHERE ...] [FROM NOW|OFFSET n] (v0.6)
     Subscribe(SubscribeStmt),
     /// UNSUBSCRIBE <id> (v0.6)
@@ -318,6 +320,14 @@ pub struct UnlinkStmt {
     pub to_conditions: Vec<Condition>,
     /// Only links of this type (all types when `None`)
     pub link_type: Option<String>,
+}
+
+/// MERGE statement (v0.10): SEMANTIC entity `from` merges into `into`: its facts
+/// and links move to `into`, it is forgotten, and its key becomes an alias of `into`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MergeStmt {
+    pub from: String,
+    pub into: String,
 }
 
 /// Query predicate

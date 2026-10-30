@@ -34,6 +34,7 @@ pub fn execute_statement(stmt: &Statement, store: &mut MemoryStore) -> QueryResu
         | Statement::Unwatch(_) => QueryResult::err(
             "Subscriptions and continuous queries (AQL v0.6 draft) are not supported in the playground",
         ),
+        Statement::Merge(_) => QueryResult::err("MERGE ENTITY (AQL v0.10 draft) is not supported in the playground yet"),
     }
 }
 

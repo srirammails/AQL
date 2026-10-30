@@ -123,6 +123,7 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> 
         Rule::link_stmt => parse_link(inner),
         Rule::update_link_stmt => parse_update_link(inner),
         Rule::unlink_stmt => parse_unlink(inner),
+        Rule::merge_stmt => parse_merge(inner),
         Rule::subscribe_stmt => parse_subscribe(inner),
         Rule::unsubscribe_stmt => parse_unsubscribe(inner),
         Rule::ack_stmt => parse_ack(inner),
@@ -502,6 +503,19 @@ fn parse_unlink(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
     let (from_type, from_conditions, to_type, to_conditions) = parse_link_ends(&mut inner)?;
     let link_type = inner.next().map(parse_link_type_filter).transpose()?;
     Ok(Statement::Unlink(UnlinkStmt { from_type, from_conditions, to_type, to_conditions, link_type }))
+}
+
+fn parse_merge(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
+    let mut inner = pair.into_inner();
+    let from = parse_string_literal(inner.next().ok_or(ParseError::Missing("entity to merge"))?)?;
+    let into = parse_string_literal(inner.next().ok_or(ParseError::Missing("entity to merge into"))?)?;
+    if from.is_empty() || into.is_empty() {
+        return Err(ParseError::Validation("MERGE needs two entity keys".into()));
+    }
+    if from == into {
+        return Err(ParseError::Validation("MERGE needs two different entities".into()));
+    }
+    Ok(Statement::Merge(MergeStmt { from, into }))
 }
 
 /// Parse memory type
@@ -1834,6 +1848,16 @@ mod tests {
             let e = parse(q).unwrap_err().to_string();
             assert!(e.contains(msg), "{q}: {e}");
         }
+    }
+
+    #[test]
+    fn test_v10_merge() {
+        let s = parse(r#"MERGE ENTITY "person:ada-lovelace" INTO "person:ada""#).unwrap();
+        assert_eq!(s, Statement::Merge(MergeStmt { from: "person:ada-lovelace".into(), into: "person:ada".into() }));
+        assert!(parse(r#"merge entity "a" into "b""#).is_ok());
+        assert!(parse(r#"MERGE ENTITY "a" INTO "a""#).unwrap_err().to_string().contains("two different entities"));
+        assert!(parse(r#"MERGE ENTITY "" INTO "a""#).is_err());
+        assert!(parse(r#"MERGE ENTITY "a""#).is_err());
     }
 
     #[test]

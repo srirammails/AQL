@@ -106,6 +106,7 @@ impl Executor {
             Statement::UpdateLink(_) | Statement::Unlink(_) => Err(ClawError::InvalidQuery(
                 "UPDATE LINK / UNLINK (AQL v0.7 draft) are not supported by ClawDB; ADB implements them".into(),
             )),
+            Statement::Merge(_) => Err(ClawError::InvalidQuery("MERGE ENTITY (AQL v0.10 draft) is not supported by ClawDB; ADB implements it".into())),
         }
     }
 
