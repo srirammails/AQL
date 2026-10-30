@@ -1,8 +1,8 @@
 # AQL v0.9 — Additions (draft): grouping and spec completion
 
-> **Date:** 30 Oct 2026 · @Sriram · **Status:** draft; §1 implemented in the grammar,
-> parser and ADB; conformance suite `24_group_by.yaml`. ClawDB and the WASM playground
-> reject `GROUP BY`.
+> **Date:** 30 Oct 2026 · @Sriram · **Status:** draft; §1–§2 implemented in the grammar,
+> parser and ADB; conformance suites `24_group_by.yaml`, `25_window_episodic.yaml`.
+> ClawDB and the WASM playground reject `GROUP BY` and `WINDOW` on `RECALL`.
 > **Extends:** [`AQL_SPEC_v0.5.md`](AQL_SPEC_v0.5.md) and the v0.6–v0.8 additions.
 > Every older statement parses as before, and its AST serializes to the same JSON.
 
@@ -38,6 +38,34 @@ RECALL FROM EPISODIC WHERE campaign = "summer"
   before.
 - `GROUP BY` applies to `RECALL`, the statement `AGGREGATE` applies to.
 
+## 2. `WINDOW` on `RECALL FROM EPISODIC` (v0.5 §22 question 2)
+
+```bnf
+recall_stmt ::= "RECALL" "FROM" memory_type predicate modifier*   -- modifier may be window_mod
+window_mod  ::= "WINDOW" ( "LAST" (integer | duration)
+                         | "TOP" integer "BY" field
+                         | "SINCE" condition )
+```
+
+```sql
+RECALL FROM EPISODIC WHERE pod = "payments-api" WINDOW LAST 7d
+RECALL FROM EPISODIC WHERE pod = "payments-api" WINDOW SINCE event_id = "inc-001"
+RECALL FROM EPISODIC WHERE pod = "payments-api" WINDOW LAST 50 AGGREGATE COUNT(*) AS n
+```
+
+- v0.5 §19 allowed `WINDOW` on `SCAN FROM WORKING` only; v0.9 also allows it on
+  `RECALL FROM EPISODIC`. Episodes are events, and "the last 7 days" or "since the
+  incident" is how agents read them.
+- The window runs over the matching episodes **in commit order** (oldest first), as on
+  WORKING: `LAST n` keeps the newest n, `LAST <duration>` those committed within it,
+  `TOP n BY field` the n with the highest field, `SINCE c` the first one matching `c`
+  and every later one.
+- Then the rest of the statement applies to what the window kept: `ORDER BY`,
+  `LIMIT`, `RETURN`, `AGGREGATE` / `GROUP BY`, and `LIKE` ranking. Without `ORDER BY`
+  the result is newest first, as for every EPISODIC read.
+- `WATCH` with `WINDOW LAST <duration>` re-runs on writes; episodes leave the window by
+  age only at the next run.
+
 ## Validation (additions to v0.5 §19)
 
 ```
@@ -45,4 +73,7 @@ GROUP BY requires AGGREGATE:
   RECALL FROM EPISODIC WHERE a = 1 GROUP BY url → error: "GROUP BY requires AGGREGATE"
 HAVING requires AGGREGATE (v0.5 §19, now enforced by the parser):
   RECALL FROM EPISODIC WHERE a = 1 HAVING n > 1 → error: "HAVING requires AGGREGATE"
+WINDOW only on SCAN FROM WORKING and RECALL FROM EPISODIC (replaces the v0.5 rule):
+  RECALL FROM SEMANTIC … WINDOW LAST 10 → error: "WINDOW is only valid on SCAN FROM
+  WORKING and RECALL FROM EPISODIC"
 ```

@@ -167,8 +167,8 @@ impl Executor {
         links: &Arc<RwLock<LinksStorage>>,
         variables: &HashMap<String, Value>,
     ) -> ClawResult<QueryData> {
-        if stmt.modifiers.group_by.is_some() {
-            return Err(ClawError::InvalidQuery("GROUP BY (AQL v0.9 draft) is not supported by ClawDB; ADB implements it".into()));
+        if stmt.modifiers.group_by.is_some() || stmt.modifiers.window.is_some() {
+            return Err(ClawError::InvalidQuery("GROUP BY and WINDOW on RECALL (AQL v0.9 draft) are not supported by ClawDB; ADB implements them".into()));
         }
         // Handle FROM ALL
         if matches!(stmt.memory_type, AqlMemoryType::All) {

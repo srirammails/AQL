@@ -34,13 +34,21 @@ pub fn parse(input: &str) -> ParseResult<Statement> {
     Err(ParseError::Empty)
 }
 
-/// §19 rules on modifiers: `HAVING` and `GROUP BY` need `AGGREGATE`.
+const WINDOW_ONLY: &str = "WINDOW is only valid on SCAN FROM WORKING and RECALL FROM EPISODIC";
+
+/// §19 rules on modifiers: `HAVING` and `GROUP BY` need `AGGREGATE`; `WINDOW` only on
+/// `SCAN FROM WORKING` and `RECALL FROM EPISODIC` (v0.9).
 fn check_modifiers(stmt: &Statement) -> ParseResult<()> {
     let mods = match stmt {
         Statement::Pipeline(p) => return p.stages.iter().try_for_each(check_modifiers),
         Statement::Watch(w) => return check_modifiers(&w.query),
         Statement::Scan(s) => &s.modifiers,
-        Statement::Recall(s) => &s.modifiers,
+        Statement::Recall(s) => {
+            if s.modifiers.window.is_some() && s.memory_type != MemoryType::Episodic {
+                return Err(ParseError::Validation(WINDOW_ONLY.into()));
+            }
+            &s.modifiers
+        }
         Statement::Lookup(s) => &s.modifiers,
         Statement::Load(s) => &s.modifiers,
         Statement::Store(s) => &s.modifiers,
@@ -48,6 +56,9 @@ fn check_modifiers(stmt: &Statement) -> ParseResult<()> {
         Statement::Forget(s) => &s.modifiers,
         _ => return Ok(()),
     };
+    if mods.window.is_some() && !matches!(stmt, Statement::Scan(_) | Statement::Recall(_)) {
+        return Err(ParseError::Validation(WINDOW_ONLY.into()));
+    }
     if mods.aggregate.is_none() {
         for (set, name) in [(mods.having.is_some(), "HAVING"), (mods.group_by.is_some(), "GROUP BY")] {
             if set {
@@ -1731,5 +1742,21 @@ mod tests {
     fn test_v09_no_group_by_json_unchanged() {
         let Statement::Recall(r) = parse("RECALL FROM EPISODIC WHERE a = 1 AGGREGATE COUNT(*) AS n").unwrap() else { panic!() };
         assert!(serde_json::to_value(&r.modifiers).unwrap().get("group_by").is_none());
+    }
+
+    #[test]
+    fn test_v09_window_on_episodic_recall_only() {
+        let Statement::Recall(r) = parse("RECALL FROM EPISODIC WHERE pod = \"api\" WINDOW LAST 7d").unwrap() else { panic!() };
+        assert!(r.modifiers.window.is_some());
+        parse("RECALL FROM EPISODIC WHERE pod = \"api\" WINDOW TOP 3 BY severity LIMIT 2").unwrap();
+        parse("SCAN FROM WORKING WINDOW LAST 10").unwrap();
+        for q in [
+            "RECALL FROM SEMANTIC WHERE a = 1 WINDOW LAST 10",
+            "LOOKUP FROM EPISODIC KEY id = \"e\" WINDOW LAST 10",
+            "FORGET FROM EPISODIC WHERE a = 1 WINDOW LAST 10",
+        ] {
+            let e = parse(q).unwrap_err().to_string();
+            assert!(e.contains("WINDOW is only valid"), "{q}: {e}");
+        }
     }
 }
