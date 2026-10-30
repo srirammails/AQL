@@ -23,13 +23,39 @@ pub fn parse(input: &str) -> ParseResult<Statement> {
         if pair.as_rule() == Rule::aql {
             for inner in pair.into_inner() {
                 if inner.as_rule() == Rule::statement {
-                    return parse_statement(inner);
+                    let stmt = parse_statement(inner)?;
+                    check_modifiers(&stmt)?;
+                    return Ok(stmt);
                 }
             }
         }
     }
 
     Err(ParseError::Empty)
+}
+
+/// §19 rules on modifiers: `HAVING` and `GROUP BY` need `AGGREGATE`.
+fn check_modifiers(stmt: &Statement) -> ParseResult<()> {
+    let mods = match stmt {
+        Statement::Pipeline(p) => return p.stages.iter().try_for_each(check_modifiers),
+        Statement::Watch(w) => return check_modifiers(&w.query),
+        Statement::Scan(s) => &s.modifiers,
+        Statement::Recall(s) => &s.modifiers,
+        Statement::Lookup(s) => &s.modifiers,
+        Statement::Load(s) => &s.modifiers,
+        Statement::Store(s) => &s.modifiers,
+        Statement::Update(s) => &s.modifiers,
+        Statement::Forget(s) => &s.modifiers,
+        _ => return Ok(()),
+    };
+    if mods.aggregate.is_none() {
+        for (set, name) in [(mods.having.is_some(), "HAVING"), (mods.group_by.is_some(), "GROUP BY")] {
+            if set {
+                return Err(ParseError::Validation(format!("{name} requires AGGREGATE")));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A clearer error than the grammar's for statements that break a §19 rule.
@@ -710,6 +736,9 @@ fn parse_modifier_into(
             let funcs: ParseResult<Vec<AggregateFunc>> =
                 inner.into_inner().map(parse_aggregate_func).collect();
             mods.aggregate = Some(funcs?);
+        }
+        Rule::group_by_mod => {
+            mods.group_by = Some(inner.into_inner().map(|f| f.as_str().to_string()).collect());
         }
         Rule::having_mod => {
             let conditions =
@@ -1672,5 +1701,35 @@ mod tests {
         let Statement::Store(st) = parse(r#"STORE INTO SEMANTIC (key = "k", subject = "x")"#).unwrap() else { panic!() };
         assert!(st.fact.is_none());
         assert!(serde_json::to_value(&st).unwrap().get("fact").is_none());
+    }
+
+    #[test]
+    fn test_v09_group_by() {
+        let Statement::Recall(r) = parse(
+            "RECALL FROM EPISODIC WHERE campaign = \"summer\" GROUP BY url, metadata.scope \
+             AGGREGATE COUNT(*) AS n HAVING n > 1 ORDER BY n DESC LIMIT 10",
+        )
+        .unwrap() else { panic!() };
+        assert_eq!(r.modifiers.group_by, Some(vec!["url".to_string(), "metadata.scope".to_string()]));
+        assert!(r.modifiers.aggregate.is_some() && r.modifiers.having.is_some());
+        // AGGREGATE before GROUP BY parses the same
+        let Statement::Recall(r2) = parse("RECALL FROM EPISODIC WHERE a = 1 AGGREGATE COUNT(*) AS n GROUP BY url").unwrap() else { panic!() };
+        assert_eq!(r2.modifiers.group_by, Some(vec!["url".to_string()]));
+    }
+
+    #[test]
+    fn test_v09_group_by_and_having_need_aggregate() {
+        for q in ["RECALL FROM EPISODIC WHERE a = 1 GROUP BY url", "RECALL FROM EPISODIC WHERE a = 1 HAVING n > 1"] {
+            let e = parse(q).unwrap_err().to_string();
+            assert!(e.contains("requires AGGREGATE"), "{q}: {e}");
+        }
+        let e = parse("PIPELINE p TIMEOUT 1s RECALL FROM EPISODIC WHERE a = 1 GROUP BY url").unwrap_err().to_string();
+        assert!(e.contains("requires AGGREGATE"), "{e}");
+    }
+
+    #[test]
+    fn test_v09_no_group_by_json_unchanged() {
+        let Statement::Recall(r) = parse("RECALL FROM EPISODIC WHERE a = 1 AGGREGATE COUNT(*) AS n").unwrap() else { panic!() };
+        assert!(serde_json::to_value(&r.modifiers).unwrap().get("group_by").is_none());
     }
 }

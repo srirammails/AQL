@@ -73,6 +73,9 @@ fn execute_store(stmt: &StoreStmt, store: &mut MemoryStore) -> QueryResult {
 
 /// Execute RECALL statement
 fn execute_recall(stmt: &RecallStmt, store: &mut MemoryStore) -> QueryResult {
+    if stmt.modifiers.group_by.is_some() {
+        return QueryResult::err("GROUP BY (AQL v0.9 draft) is not supported in the playground yet");
+    }
     // Handle SEMANTIC with LIKE predicate
     if matches!(stmt.memory_type, MemoryType::Semantic) {
         return execute_semantic_recall(stmt, store);

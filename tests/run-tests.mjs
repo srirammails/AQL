@@ -229,6 +229,30 @@ function checkExpectation(result, expect, testId) {
     }
   }
 
+  // Aggregation checks: `values` (the aggregate object, numbers within 1e-6),
+  // `values_null` (HAVING suppressed the result), `groups` (GROUP BY rows, in order).
+  const sameJson = (a, b) => {
+    if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) < 1e-6;
+    if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((x, i) => sameJson(x, b[i]));
+    if (a && b && typeof a === 'object' && typeof b === 'object') {
+      const ka = Object.keys(a).sort(), kb = Object.keys(b).sort();
+      return sameJson(ka, kb) && ka.every(k => sameJson(a[k], b[k]));
+    }
+    return a === b;
+  };
+  if (expect.values && result.success) {
+    const got = result.data?.values;
+    for (const [k, want] of Object.entries(expect.values)) {
+      if (!sameJson(got?.[k], want)) errors.push(`Expected values.${k}=${JSON.stringify(want)}, got ${JSON.stringify(got?.[k])}`);
+    }
+  }
+  if (expect.values_null && result.success && result.data?.values != null) {
+    errors.push(`Expected null values, got ${JSON.stringify(result.data.values)}`);
+  }
+  if (expect.groups && result.success && !sameJson(result.data?.values, expect.groups)) {
+    errors.push(`Expected groups ${JSON.stringify(expect.groups)}, got ${JSON.stringify(result.data?.values)}`);
+  }
+
   // Link checks (WITH LINKS results): links on the returned records' `links`.
   const allLinks = () => (result.data?.records ?? []).flatMap(r => (r.data ?? r).links ?? r.links ?? []);
   if (expect.links_count !== undefined && result.success) {

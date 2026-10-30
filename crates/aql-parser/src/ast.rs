@@ -548,6 +548,9 @@ pub struct Modifiers {
     /// AGGREGATE functions
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aggregate: Option<Vec<AggregateFunc>>,
+    /// GROUP BY fields (v0.9): with AGGREGATE, one result row per group
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_by: Option<Vec<String>>,
     /// HAVING conditions
     #[serde(skip_serializing_if = "Option::is_none")]
     pub having: Option<Vec<Condition>>,

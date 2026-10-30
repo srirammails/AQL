@@ -280,6 +280,7 @@ modifier = {
   | namespace_mod
   | ttl_mod
   | aggregate_mod
+  | group_by_mod
   | having_mod
   | with_links_mod
   | follow_links_mod
@@ -323,6 +324,9 @@ agg_func = {
 agg_alias = { ^"AS" ~ identifier }
 
 agg_func_name = { ^"COUNT" | ^"AVG" | ^"SUM" | ^"MIN" | ^"MAX" }
+
+// v0.9: GROUP BY url, region (with AGGREGATE: one result row per group)
+group_by_mod = { ^"GROUP" ~ ^"BY" ~ field_path ~ ("," ~ field_path)* }
 
 // HAVING uses > 10 AND avg_ctr < 0.01
 having_mod = { ^"HAVING" ~ condition_list }

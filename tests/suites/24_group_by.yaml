@@ -1,0 +1,114 @@
+# AQL v0.9 draft Test Suite - GROUP BY
+# GROUP BY with AGGREGATE: one row per group; HAVING, ORDER BY, LIMIT and RETURN on
+# the groups (spec/AQL_SPEC_v0.9_additions.md §1). Tests run in order; the first
+# ones store five visits (gb = "t24"); one has no url. Totals per url: a 4, b 5,
+# c 2, none 6.
+
+suite: GROUP_BY
+spec_section: "v0.9 §1"
+total_tests: 13
+
+tests:
+  - id: T24-01
+    name: "setup: visit 1"
+    query: |
+      STORE INTO EPISODIC (gb = "t24", url = "a", clicks = 1, region = "eu")
+    expect:
+      success: true
+
+  - id: T24-02
+    name: "setup: visit 2"
+    query: |
+      STORE INTO EPISODIC (gb = "t24", url = "b", clicks = 5, region = "us")
+    expect:
+      success: true
+
+  - id: T24-03
+    name: "setup: visit 3"
+    query: |
+      STORE INTO EPISODIC (gb = "t24", url = "a", clicks = 3, region = "us")
+    expect:
+      success: true
+
+  - id: T24-04
+    name: "setup: visit 4"
+    query: |
+      STORE INTO EPISODIC (gb = "t24", url = "c", clicks = 2, region = "eu")
+    expect:
+      success: true
+
+  - id: T24-05
+    name: "setup: visit 5"
+    query: |
+      STORE INTO EPISODIC (gb = "t24", clicks = 6, region = "eu")
+    expect:
+      success: true
+
+  - id: T24-06
+    name: "count and sum per url; null group last ascending"
+    query: |
+      RECALL FROM EPISODIC WHERE gb = "t24" GROUP BY url AGGREGATE COUNT(*) AS n, SUM(clicks) AS total ORDER BY url ASC
+    expect:
+      success: true
+      groups:
+        - {url: "a", n: 2, total: 4}
+        - {url: "b", n: 1, total: 5}
+        - {url: "c", n: 1, total: 2}
+        - {url: null, n: 1, total: 6}
+  - id: T24-07
+    name: "HAVING filters groups"
+    query: |
+      RECALL FROM EPISODIC WHERE gb = "t24" GROUP BY url AGGREGATE COUNT(*) AS n HAVING n > 1
+    expect:
+      success: true
+      groups:
+        - {url: "a", n: 2}
+  - id: T24-08
+    name: "ORDER BY an aggregate, LIMIT and RETURN on groups"
+    query: |
+      RECALL FROM EPISODIC WHERE gb = "t24" GROUP BY url AGGREGATE SUM(clicks) AS total ORDER BY total DESC LIMIT 2 RETURN url
+    expect:
+      success: true
+      groups:
+        - {url: null}
+        - {url: "b"}
+  - id: T24-09
+    name: "HAVING that no group passes gives no rows"
+    query: |
+      RECALL FROM EPISODIC WHERE gb = "t24" GROUP BY url AGGREGATE COUNT(*) AS n HAVING n > 9
+    expect:
+      success: true
+      groups: []
+  - id: T24-10
+    name: "several aggregates per group"
+    query: |
+      RECALL FROM EPISODIC WHERE gb = "t24" GROUP BY region AGGREGATE COUNT(*) AS n, MAX(clicks) AS top, MIN(clicks) AS low ORDER BY region
+    expect:
+      success: true
+      groups:
+        - {region: "eu", n: 3, top: 6, low: 1}
+        - {region: "us", n: 2, top: 5, low: 3}
+  - id: T24-11
+    name: "AGGREGATE may come before GROUP BY"
+    query: |
+      RECALL FROM EPISODIC WHERE gb = "t24" AGGREGATE COUNT(*) AS n GROUP BY region ORDER BY n DESC
+    expect:
+      success: true
+      groups:
+        - {region: "eu", n: 3}
+        - {region: "us", n: 2}
+  - id: T24-12
+    name: "GROUP BY requires AGGREGATE"
+    query: |
+      RECALL FROM EPISODIC WHERE gb = "t24" GROUP BY url
+    expect:
+      success: false
+      error_contains: "requires AGGREGATE"
+
+  - id: T24-13
+    name: "HAVING requires AGGREGATE (v0.5 §19)"
+    query: |
+      RECALL FROM EPISODIC WHERE gb = "t24" HAVING n > 1
+    expect:
+      success: false
+      error_contains: "requires AGGREGATE"
