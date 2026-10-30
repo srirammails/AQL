@@ -76,6 +76,9 @@ fn execute_recall(stmt: &RecallStmt, store: &mut MemoryStore) -> QueryResult {
     if stmt.modifiers.group_by.is_some() || stmt.modifiers.window.is_some() {
         return QueryResult::err("GROUP BY and WINDOW on RECALL (AQL v0.9 draft) are not supported in the playground yet");
     }
+    if let Some(e) = time_unsupported(&stmt.modifiers) {
+        return e;
+    }
     // Handle SEMANTIC with LIKE predicate
     if matches!(stmt.memory_type, MemoryType::Semantic) {
         return execute_semantic_recall(stmt, store);
@@ -276,6 +279,9 @@ fn matches_having(results: &Value, conditions: &[Condition]) -> bool {
 
 /// Execute LOOKUP statement
 fn execute_lookup(stmt: &LookupStmt, store: &mut MemoryStore) -> QueryResult {
+    if let Some(e) = time_unsupported(&stmt.modifiers) {
+        return e;
+    }
     let records = match query_records(store, &stmt.memory_type, &stmt.predicate, &stmt.modifiers) {
         Ok(r) => r,
         Err(e) => return QueryResult::err(&e),
@@ -949,4 +955,10 @@ fn project_fields(record: &Record, fields: &[String]) -> Value {
     }
 
     Value::Object(result)
+}
+
+/// History reads (AQL v0.10 draft) need versions the playground doesn't keep.
+fn time_unsupported(mods: &Modifiers) -> Option<QueryResult> {
+    (mods.as_of.is_some() || mods.valid_at.is_some() || mods.with_history)
+        .then(|| QueryResult::err("AS OF, VALID AT and WITH HISTORY (AQL v0.10 draft) are not supported in the playground yet"))
 }

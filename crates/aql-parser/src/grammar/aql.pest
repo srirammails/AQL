@@ -286,6 +286,9 @@ modifier = {
   | follow_links_mod
   | window_mod
   | in_scope_mod
+  | as_of_mod
+  | valid_at_mod
+  | with_history_mod
 }
 
 // v0.6: named scope, e.g. STORE INTO SEMANTIC (...) IN SCOPE "team:billing".
@@ -321,7 +324,9 @@ agg_func = {
     agg_func_name ~ "(" ~ (field_path | "*") ~ ")" ~ agg_alias?
 }
 
-agg_alias = { ^"AS" ~ identifier }
+// `AS OF` after an aggregate is the time modifier, not an alias named OF.
+agg_alias = { ^"AS" ~ !of_kw ~ identifier }
+of_kw = @{ ^"OF" ~ !(ASCII_ALPHANUMERIC | "_" | "-") }
 
 agg_func_name = { ^"COUNT" | ^"AVG" | ^"SUM" | ^"MIN" | ^"MAX" }
 
@@ -357,6 +362,18 @@ window_mod = {
       | (^"SINCE" ~ simple_condition)
     )
 }
+
+// v0.10: AS OF "2026-10-01" | AS OF $t | AS OF 7d AGO — the memory as it was then
+as_of_mod = { ^"AS" ~ ^"OF" ~ time_point }
+
+// v0.10: VALID AT "1835-01-01" — facts that held then, as known now
+valid_at_mod = { ^"VALID" ~ ^"AT" ~ time_point }
+
+// v0.10: WITH HISTORY — every version, current and replaced
+with_history_mod = { ^"WITH" ~ ^"HISTORY" }
+
+time_point = { time_ago | string_literal | variable }
+time_ago = { duration_literal ~ ^"AGO" }
 
 // ============================================================================
 // Memory Types

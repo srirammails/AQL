@@ -59,12 +59,35 @@ fn check_modifiers(stmt: &Statement) -> ParseResult<()> {
     if mods.window.is_some() && !matches!(stmt, Statement::Scan(_) | Statement::Recall(_)) {
         return Err(ParseError::Validation(WINDOW_ONLY.into()));
     }
+    check_time(stmt, mods)?;
     if mods.aggregate.is_none() {
         for (set, name) in [(mods.having.is_some(), "HAVING"), (mods.group_by.is_some(), "GROUP BY")] {
             if set {
                 return Err(ParseError::Validation(format!("{name} requires AGGREGATE")));
             }
         }
+    }
+    Ok(())
+}
+
+const TIME_ONLY: &str = "AS OF, VALID AT and WITH HISTORY are only valid on RECALL and LOOKUP";
+
+/// v0.10: history reads are RECALL / LOOKUP over the versioned memory types;
+/// validity belongs to SEMANTIC facts.
+fn check_time(stmt: &Statement, mods: &Modifiers) -> ParseResult<()> {
+    if mods.as_of.is_none() && mods.valid_at.is_none() && !mods.with_history {
+        return Ok(());
+    }
+    let memory = match stmt {
+        Statement::Recall(s) => s.memory_type,
+        Statement::Lookup(s) => s.memory_type,
+        _ => return Err(ParseError::Validation(TIME_ONLY.into())),
+    };
+    if mods.valid_at.is_some() && memory != MemoryType::Semantic {
+        return Err(ParseError::Validation("VALID AT is only valid on SEMANTIC".into()));
+    }
+    if !matches!(memory, MemoryType::Semantic | MemoryType::Procedural) {
+        return Err(ParseError::Validation("AS OF and WITH HISTORY are only valid on SEMANTIC and PROCEDURAL".into()));
     }
     Ok(())
 }
@@ -765,6 +788,15 @@ fn parse_modifier_into(
         Rule::window_mod => {
             mods.window = Some(parse_window(inner)?);
         }
+        Rule::as_of_mod => {
+            mods.as_of = Some(parse_time_point(inner.into_inner().next().ok_or(ParseError::Missing("time"))?)?);
+        }
+        Rule::valid_at_mod => {
+            mods.valid_at = Some(parse_time_point(inner.into_inner().next().ok_or(ParseError::Missing("time"))?)?);
+        }
+        Rule::with_history_mod => {
+            mods.with_history = true;
+        }
         _ => {}
     }
 
@@ -1110,6 +1142,18 @@ fn parse_string_literal(pair: pest::iterators::Pair<Rule>) -> ParseResult<String
 }
 
 /// Parse variable name (remove $ or {})
+/// Parse a time point (v0.10): `"2026-10-01"`, `$t` or `7d AGO`.
+fn parse_time_point(pair: pest::iterators::Pair<Rule>) -> ParseResult<TimePoint> {
+    let inner = pair.into_inner().next().ok_or(ParseError::Missing("time"))?;
+    match inner.as_rule() {
+        Rule::time_ago => Ok(TimePoint::Ago {
+            duration: parse_duration(inner.into_inner().next().ok_or(ParseError::Missing("duration"))?)?,
+        }),
+        Rule::variable => Ok(TimePoint::Variable { name: parse_variable_name(inner)? }),
+        _ => Ok(TimePoint::At { time: parse_string_literal(inner)? }),
+    }
+}
+
 fn parse_variable_name(pair: pest::iterators::Pair<Rule>) -> ParseResult<String> {
     let s = pair.as_str();
     if s.starts_with('{') && s.ends_with('}') {
@@ -1758,5 +1802,43 @@ mod tests {
             let e = parse(q).unwrap_err().to_string();
             assert!(e.contains("WINDOW is only valid"), "{q}: {e}");
         }
+    }
+
+    #[test]
+    fn test_v10_time_modifiers() {
+        let Statement::Recall(r) = parse("RECALL FROM SEMANTIC WHERE subject = \"person:ada\" AS OF \"2026-10-01\"").unwrap() else { panic!() };
+        assert_eq!(r.modifiers.as_of, Some(TimePoint::At { time: "2026-10-01".into() }));
+        let Statement::Recall(r) = parse("RECALL FROM SEMANTIC WHERE a = 1 VALID AT $t WITH HISTORY LIMIT 5").unwrap() else { panic!() };
+        assert_eq!(r.modifiers.valid_at, Some(TimePoint::Variable { name: "t".into() }));
+        assert!(r.modifiers.with_history);
+        assert_eq!(r.modifiers.limit, Some(5));
+        let Statement::Lookup(l) = parse("LOOKUP FROM PROCEDURAL KEY pattern_id = \"p\" AS OF 7d AGO").unwrap() else { panic!() };
+        assert_eq!(l.modifiers.as_of, Some(TimePoint::Ago { duration: Duration::from_secs(7 * 86_400) }));
+        // WITH LINKS still parses; an alias before AS OF still does.
+        parse("RECALL FROM SEMANTIC WHERE a = 1 WITH LINKS ALL").unwrap();
+        let Statement::Recall(r) = parse("RECALL FROM SEMANTIC WHERE a = 1 AGGREGATE COUNT(*) AS n AS OF 1d AGO").unwrap() else { panic!() };
+        assert_eq!(r.modifiers.aggregate.as_ref().unwrap()[0].alias.as_deref(), Some("n"));
+        assert!(r.modifiers.as_of.is_some());
+        let Statement::Recall(r) = parse("RECALL FROM SEMANTIC WHERE a = 1 AGGREGATE COUNT(*) AS OF 1d AGO").unwrap() else { panic!() };
+        assert!(r.modifiers.as_of.is_some() && r.modifiers.aggregate.as_ref().unwrap()[0].alias.is_none());
+    }
+
+    #[test]
+    fn test_v10_time_modifiers_validation() {
+        for (q, msg) in [
+            ("RECALL FROM EPISODIC WHERE a = 1 AS OF 1d AGO", "only valid on SEMANTIC and PROCEDURAL"),
+            ("RECALL FROM PROCEDURAL WHERE a = 1 VALID AT \"2026-01-01\"", "VALID AT is only valid on SEMANTIC"),
+            ("SCAN FROM WORKING WITH HISTORY", "only valid on RECALL and LOOKUP"),
+            ("FORGET FROM SEMANTIC WHERE a = 1 AS OF 1d AGO", "only valid on RECALL and LOOKUP"),
+        ] {
+            let e = parse(q).unwrap_err().to_string();
+            assert!(e.contains(msg), "{q}: {e}");
+        }
+    }
+
+    #[test]
+    fn test_v10_no_time_json_unchanged() {
+        let json = serde_json::to_string(&parse("RECALL FROM SEMANTIC WHERE a = 1 LIMIT 2").unwrap()).unwrap();
+        assert!(!json.contains("as_of") && !json.contains("with_history") && !json.contains("valid_at"), "{json}");
     }
 }

@@ -170,6 +170,7 @@ impl Executor {
         if stmt.modifiers.group_by.is_some() || stmt.modifiers.window.is_some() {
             return Err(ClawError::InvalidQuery("GROUP BY and WINDOW on RECALL (AQL v0.9 draft) are not supported by ClawDB; ADB implements them".into()));
         }
+        check_time(&stmt.modifiers)?;
         // Handle FROM ALL
         if matches!(stmt.memory_type, AqlMemoryType::All) {
             return self.execute_recall_all(backends, &stmt.predicate, &stmt.modifiers, variables).await;
@@ -283,6 +284,7 @@ impl Executor {
         backends: &HashMap<MemoryType, Arc<LanceBackend>>,
         variables: &HashMap<String, Value>,
     ) -> ClawResult<QueryData> {
+        check_time(&stmt.modifiers)?;
         // Validation: LOOKUP only valid on SEMANTIC, PROCEDURAL, TOOLS
         match stmt.memory_type {
             AqlMemoryType::Working => {
@@ -809,4 +811,12 @@ fn compare_json_values(a: &Option<Value>, b: &Option<Value>) -> std::cmp::Orderi
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (None, None) => std::cmp::Ordering::Equal,
     }
+}
+
+/// History reads (AQL v0.10 draft) need versions ClawDB doesn't keep.
+fn check_time(mods: &aql_parser::Modifiers) -> ClawResult<()> {
+    if mods.as_of.is_some() || mods.valid_at.is_some() || mods.with_history {
+        return Err(ClawError::InvalidQuery("AS OF, VALID AT and WITH HISTORY (AQL v0.10 draft) are not supported by ClawDB; ADB implements them".into()));
+    }
+    Ok(())
 }

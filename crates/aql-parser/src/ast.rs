@@ -566,6 +566,27 @@ pub struct Modifiers {
     /// IN SCOPE "agent:42" — named scope (v0.6)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub in_scope: Option<String>,
+    /// AS OF t (v0.10): the records as they were at t
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_of: Option<TimePoint>,
+    /// VALID AT t (v0.10): facts that held at t, as known now
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_at: Option<TimePoint>,
+    /// WITH HISTORY (v0.10): every version, current and replaced
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub with_history: bool,
+}
+
+/// A point in time (v0.10): a date or RFC 3339 string, a variable, or a duration ago.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TimePoint {
+    /// "2026-10-01" or "2026-10-01T12:00:00Z"
+    At { time: String },
+    /// $t, bound by the caller or an earlier pipeline stage
+    Variable { name: String },
+    /// 7d AGO
+    Ago { duration: Duration },
 }
 
 /// ORDER BY specification
