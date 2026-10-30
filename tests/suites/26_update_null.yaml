@@ -1,0 +1,71 @@
+# AQL v0.9 draft Test Suite - removing a field with UPDATE
+# `field = null` in UPDATE removes the field (spec/AQL_SPEC_v0.9_additions.md §3), on a
+# superseding type (SEMANTIC) and a patched one (EPISODIC).
+
+suite: UPDATE_NULL
+spec_section: "v0.9 §3"
+total_tests: 8
+
+tests:
+  - id: T26-01
+    name: "setup: fact with a note"
+    query: |
+      STORE INTO SEMANTIC (key = "u26", concept = "t26_fact", note = "draft", n = 1)
+    expect:
+      success: true
+
+  - id: T26-02
+    name: "UPDATE SEMANTIC with note = null"
+    query: |
+      UPDATE INTO SEMANTIC WHERE concept = "t26_fact" (note = null, n = 2)
+    expect:
+      success: true
+      count: 1
+
+  - id: T26-03
+    name: "the note is gone, the other field changed"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "t26_fact"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.n": 2}
+
+  - id: T26-04
+    name: "a removed field no longer matches"
+    query: |
+      RECALL FROM SEMANTIC WHERE note = "draft"
+    expect:
+      success: true
+      count: 0
+
+  - id: T26-05
+    name: "setup: episode with a note"
+    query: |
+      STORE INTO EPISODIC (t26 = "ep", note = "draft")
+    expect:
+      success: true
+
+  - id: T26-06
+    name: "UPDATE EPISODIC with note = null"
+    query: |
+      UPDATE INTO EPISODIC WHERE t26 = "ep" (note = null)
+    expect:
+      success: true
+      count: 1
+
+  - id: T26-07
+    name: "the episode's note is gone"
+    query: |
+      RECALL FROM EPISODIC WHERE t26 = "ep" AND note = "draft"
+    expect:
+      success: true
+      count: 0
+
+  - id: T26-08
+    name: "the episode itself stays"
+    query: |
+      RECALL FROM EPISODIC WHERE t26 = "ep"
+    expect:
+      success: true
+      count: 1

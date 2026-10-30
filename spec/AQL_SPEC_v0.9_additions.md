@@ -1,7 +1,8 @@
 # AQL v0.9 — Additions (draft): grouping and spec completion
 
-> **Date:** 30 Oct 2026 · @Sriram · **Status:** draft; §1–§2 implemented in the grammar,
-> parser and ADB; conformance suites `24_group_by.yaml`, `25_window_episodic.yaml`.
+> **Date:** 30 Oct 2026 · @Sriram · **Status:** draft; §1–§4 implemented in the grammar,
+> parser and ADB; conformance suites `24_group_by.yaml`, `25_window_episodic.yaml`,
+> `26_update_null.yaml`.
 > ClawDB and the WASM playground reject `GROUP BY` and `WINDOW` on `RECALL`.
 > **Extends:** [`AQL_SPEC_v0.5.md`](AQL_SPEC_v0.5.md) and the v0.6–v0.8 additions.
 > Every older statement parses as before, and its AST serializes to the same JSON.
@@ -65,6 +66,33 @@ RECALL FROM EPISODIC WHERE pod = "payments-api" WINDOW LAST 50 AGGREGATE COUNT(*
   the result is newest first, as for every EPISODIC read.
 - `WATCH` with `WINDOW LAST <duration>` re-runs on writes; episodes leave the window by
   age only at the next run.
+
+## 3. Removing a field: `UPDATE … (field = null)` (D2 §8)
+
+```sql
+UPDATE INTO SEMANTIC WHERE concept = "acme" (draft_note = null, status = "final")
+```
+
+- In `UPDATE`, a field set to `null` is **removed** from the record; the other fields
+  are merged as before. A removed field no longer matches `WHERE`, and `RETURN` leaves
+  it out.
+- On SEMANTIC and PROCEDURAL the new version lacks the field (older versions keep
+  it, as history); on EPISODIC, WORKING and TOOLS the record is patched in place.
+  Subscribers receive the patch with the field `null`.
+- Removing `content` also drops the record's text and vector.
+- `STORE` is unchanged: there, `field = null` stores a null.
+
+## 4. Corrections to v0.5
+
+- **§14 modifier list.** v0.5 §14's BNF listed `weight_mod ::= "WEIGHT" field`,
+  `threshold_mod ::= "THRESHOLD" float` and `source_mod ::= "FROM" identifier_list`. No
+  grammar had them and no example used them as modifiers; they are withdrawn.
+  `THRESHOLD` stays where §16's examples use it, after a pattern
+  (`LOOKUP FROM PROCEDURAL PATTERN $p THRESHOLD 0.7`), and `WEIGHT` on `LINK` (§9).
+- The modifiers, as the grammar defines them through v0.9: `LIMIT`, `ORDER BY`,
+  `RETURN`, `TIMEOUT`, `MIN_CONFIDENCE`, `SCOPE`, `NAMESPACE`, `TTL`, `AGGREGATE`,
+  `GROUP BY`, `HAVING`, `WITH LINKS`, `FOLLOW LINKS`, `WINDOW`, `IN SCOPE`.
+- **§19 `WINDOW`** is replaced by §2 above.
 
 ## Validation (additions to v0.5 §19)
 
