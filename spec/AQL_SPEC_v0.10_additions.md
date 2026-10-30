@@ -2,7 +2,8 @@
 
 > **Date:** 30 Oct 2026 · @Sriram · **Status:** draft; implemented in the grammar,
 > parser and ADB; conformance suite `27_time.yaml`. ClawDB and the WASM playground
-> reject `AS OF`, `VALID AT`, `WITH HISTORY` and `MERGE ENTITY` (suite `28_merge.yaml`).
+> reject `AS OF`, `VALID AT`, `WITH HISTORY` and `MERGE ENTITY` (suite `28_merge.yaml`);
+> keys per scope (§5): suite `29_scoped_keys.yaml`.
 > **Extends:** [`AQL_SPEC_v0.5.md`](AQL_SPEC_v0.5.md) and the v0.6–v0.9 additions.
 > Every older statement parses as before, and its AST serializes to the same JSON.
 
@@ -125,6 +126,23 @@ entities, in one write):
   replaced). Errors: either key isn't an entity, `dup` is already an alias, or both
   name the same entity (after resolving `survivor`'s aliases).
 
+## 5. Keys per scope
+
+A key is unique per (scope, memory type) (D3 S4), so the same key can name one
+record in each named scope. A record in a named scope has the id `<scope>~<key>`
+(`team:billing~invoice-7`); in the default scope (no `IN SCOPE`) the id is the key.
+The payload keeps the bare key (`key`, a fact's `subject` / `object`).
+
+- `KEY id = "k"` / `WHERE id = "k"` with `IN SCOPE "s"` find `s~k` (the full id also
+  works). Without `IN SCOPE` a bare key names the default scope's record.
+- Payload fields (`WHERE key = …`, `subject = …`) match as stored: without `IN SCOPE`,
+  in every scope.
+- `STORE … FACT … IN SCOPE "s"`: the fact and the entities at its ends are `s`'s, so
+  one subject and predicate has a current fact per scope, and forgetting an entity
+  in `s` forgets `s`'s facts about it (§3).
+- A key can't contain `~` (except a full id in its own scope). `MERGE ENTITY` works
+  on the default scope's entities.
+
 ## Validation (additions to v0.5 §19)
 
 ```
@@ -137,6 +155,8 @@ On SEMANTIC and PROCEDURAL only:
 VALID AT on SEMANTIC only:
   RECALL FROM PROCEDURAL … VALID AT "2026-01-01" → error: "VALID AT is only valid on
   SEMANTIC"
+A key can't contain "~" (it joins a named scope and a key):
+  STORE INTO SEMANTIC (key = "a~b") → error: "a key can't contain '~'"
 MERGE ENTITY needs two different keys:
   MERGE ENTITY "a" INTO "a" → error: "MERGE needs two different entities"
 ```

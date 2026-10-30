@@ -53,7 +53,7 @@ tests:
       success: true
       fields:
         data.result.data.count: 1
-        data.result.data.records.0.id: "cw-2"
+        data.result.data.records.0.id: "team:conf-watch~cw-2"
 
   - id: T19-06
     name: "WATCH an aggregate"
