@@ -83,6 +83,17 @@ RECALL FROM SEMANTIC WHERE subject = $who AS OF $then
 - **What history is kept** is the implementation's: a forgotten record has none (D2
   T5), nor does an expired one. ADB keeps replaced versions for 90 days.
 
+## 3. Forgetting an entity
+
+`FORGET FROM SEMANTIC` that matches an entity also forgets every fact about it, as
+subject or object, every version (with `IN SCOPE`, the facts of that scope). The
+count includes those facts. Links to and from the entity go with it, as before.
+Forgetting a fact leaves its entities.
+
+```sql
+FORGET FROM SEMANTIC WHERE key = "person:ada"   -- the entity and its facts
+```
+
 ## Validation (additions to v0.5 §19)
 
 ```
