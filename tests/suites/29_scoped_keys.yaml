@@ -1,0 +1,103 @@
+# AQL v0.10 draft Test Suite - Keys per scope
+# A key is unique per (scope, memory type); a record in a named scope has the id
+# <scope>~<key> (spec/AQL_SPEC_v0.10_additions.md §5).
+
+suite: SCOPED_KEYS
+spec_section: "v0.10 §5"
+requires: server
+total_tests: 12
+
+tests:
+  - id: T29-01
+    name: "setup: a key in the default scope"
+    query: |
+      STORE INTO SEMANTIC (key = "t29:x", n = 0)
+    expect:
+      success: true
+
+  - id: T29-02
+    name: "the same key in a named scope"
+    query: |
+      STORE INTO SEMANTIC (key = "t29:x", n = 1) IN SCOPE "team:t29a"
+    expect:
+      success: true
+
+  - id: T29-03
+    name: "and in another"
+    query: |
+      STORE INTO SEMANTIC (key = "t29:x", n = 2) IN SCOPE "team:t29b"
+    expect:
+      success: true
+
+  - id: T29-04
+    name: "a key is unique within its scope"
+    query: |
+      STORE INTO SEMANTIC (key = "t29:x", n = 3) IN SCOPE "team:t29a"
+    expect:
+      success: false
+      error_contains: "key_exists"
+
+  - id: T29-05
+    name: "KEY id with IN SCOPE takes the bare key"
+    query: |
+      LOOKUP FROM SEMANTIC IN SCOPE "team:t29b" KEY id = "t29:x"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.id": "team:t29b~t29:x", "data.records.0.data.key": "t29:x", "data.records.0.data.n": 2}
+
+  - id: T29-06
+    name: "without IN SCOPE a bare key is the default scope's"
+    query: |
+      LOOKUP FROM SEMANTIC KEY id = "t29:x"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.n": 0}
+
+  - id: T29-07
+    name: "payload fields match in every scope"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t29:x"
+    expect:
+      success: true
+      count: 3
+
+  - id: T29-08
+    name: "a fact in one scope"
+    query: |
+      STORE INTO SEMANTIC FACT (subject = "t29:ada", predicate = "works_at", object = "t29:acme") IN SCOPE "team:t29a"
+    expect:
+      success: true
+
+  - id: T29-09
+    name: "the same subject and predicate in another scope doesn't replace it"
+    query: |
+      STORE INTO SEMANTIC FACT (subject = "t29:ada", predicate = "works_at", object = "t29:globex") IN SCOPE "team:t29b"
+    expect:
+      success: true
+
+  - id: T29-10
+    name: "each scope has its fact"
+    query: |
+      RECALL FROM SEMANTIC WHERE subject = "t29:ada" AND predicate = "works_at" IN SCOPE "team:t29a"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.object": "t29:acme"}
+
+  - id: T29-11
+    name: "both are current"
+    query: |
+      RECALL FROM SEMANTIC WHERE subject = "t29:ada" AND predicate = "works_at"
+    expect:
+      success: true
+      count: 2
+
+  - id: T29-12
+    name: "a key can't contain ~"
+    query: |
+      STORE INTO SEMANTIC (key = "t29:a~b", n = 1)
+    expect:
+      success: false
+      error_contains: "can't contain '~'"

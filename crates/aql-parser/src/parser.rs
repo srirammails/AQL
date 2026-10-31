@@ -23,13 +23,73 @@ pub fn parse(input: &str) -> ParseResult<Statement> {
         if pair.as_rule() == Rule::aql {
             for inner in pair.into_inner() {
                 if inner.as_rule() == Rule::statement {
-                    return parse_statement(inner);
+                    let stmt = parse_statement(inner)?;
+                    check_modifiers(&stmt)?;
+                    return Ok(stmt);
                 }
             }
         }
     }
 
     Err(ParseError::Empty)
+}
+
+const WINDOW_ONLY: &str = "WINDOW is only valid on SCAN FROM WORKING and RECALL FROM EPISODIC";
+
+/// §19 rules on modifiers: `HAVING` and `GROUP BY` need `AGGREGATE`; `WINDOW` only on
+/// `SCAN FROM WORKING` and `RECALL FROM EPISODIC` (v0.9).
+fn check_modifiers(stmt: &Statement) -> ParseResult<()> {
+    let mods = match stmt {
+        Statement::Pipeline(p) => return p.stages.iter().try_for_each(check_modifiers),
+        Statement::Watch(w) => return check_modifiers(&w.query),
+        Statement::Scan(s) => &s.modifiers,
+        Statement::Recall(s) => {
+            if s.modifiers.window.is_some() && s.memory_type != MemoryType::Episodic {
+                return Err(ParseError::Validation(WINDOW_ONLY.into()));
+            }
+            &s.modifiers
+        }
+        Statement::Lookup(s) => &s.modifiers,
+        Statement::Load(s) => &s.modifiers,
+        Statement::Store(s) => &s.modifiers,
+        Statement::Update(s) => &s.modifiers,
+        Statement::Forget(s) => &s.modifiers,
+        _ => return Ok(()),
+    };
+    if mods.window.is_some() && !matches!(stmt, Statement::Scan(_) | Statement::Recall(_)) {
+        return Err(ParseError::Validation(WINDOW_ONLY.into()));
+    }
+    check_time(stmt, mods)?;
+    if mods.aggregate.is_none() {
+        for (set, name) in [(mods.having.is_some(), "HAVING"), (mods.group_by.is_some(), "GROUP BY")] {
+            if set {
+                return Err(ParseError::Validation(format!("{name} requires AGGREGATE")));
+            }
+        }
+    }
+    Ok(())
+}
+
+const TIME_ONLY: &str = "AS OF, VALID AT and WITH HISTORY are only valid on RECALL and LOOKUP";
+
+/// v0.10: history reads are RECALL / LOOKUP over the versioned memory types;
+/// validity belongs to SEMANTIC facts.
+fn check_time(stmt: &Statement, mods: &Modifiers) -> ParseResult<()> {
+    if mods.as_of.is_none() && mods.valid_at.is_none() && !mods.with_history {
+        return Ok(());
+    }
+    let memory = match stmt {
+        Statement::Recall(s) => s.memory_type,
+        Statement::Lookup(s) => s.memory_type,
+        _ => return Err(ParseError::Validation(TIME_ONLY.into())),
+    };
+    if mods.valid_at.is_some() && memory != MemoryType::Semantic {
+        return Err(ParseError::Validation("VALID AT is only valid on SEMANTIC".into()));
+    }
+    if !matches!(memory, MemoryType::Semantic | MemoryType::Procedural) {
+        return Err(ParseError::Validation("AS OF and WITH HISTORY are only valid on SEMANTIC and PROCEDURAL".into()));
+    }
+    Ok(())
 }
 
 /// A clearer error than the grammar's for statements that break a §19 rule.
@@ -63,6 +123,7 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> 
         Rule::link_stmt => parse_link(inner),
         Rule::update_link_stmt => parse_update_link(inner),
         Rule::unlink_stmt => parse_unlink(inner),
+        Rule::merge_stmt => parse_merge(inner),
         Rule::subscribe_stmt => parse_subscribe(inner),
         Rule::unsubscribe_stmt => parse_unsubscribe(inner),
         Rule::ack_stmt => parse_ack(inner),
@@ -271,7 +332,16 @@ fn parse_store(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
     let mut inner = pair.into_inner();
 
     let memory_type = parse_memory_type(inner.next().ok_or(ParseError::Missing("memory type"))?)?;
-    let payload = parse_payload(inner.next().ok_or(ParseError::Missing("payload"))?)?;
+    let mut next = inner.next().ok_or(ParseError::Missing("payload"))?;
+    let mut fact = None;
+    if next.as_rule() == Rule::fact_mod {
+        fact = Some(FactMode { multi: next.into_inner().any(|p| p.as_rule() == Rule::multi_kw) });
+        next = inner.next().ok_or(ParseError::Missing("payload"))?;
+    }
+    let payload = parse_payload(next)?;
+    if fact.is_some() {
+        check_fact(memory_type, &payload)?;
+    }
 
     let mut modifiers = Modifiers::default();
     for item in inner {
@@ -282,9 +352,31 @@ fn parse_store(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
 
     Ok(Statement::Store(StoreStmt {
         memory_type,
+        fact,
         payload,
         modifiers,
     }))
+}
+
+/// v0.8 §6: a fact is SEMANTIC, with a string `subject` and `predicate` and exactly
+/// one of `object` (an entity key, string) and `value` (a literal).
+fn check_fact(memory_type: MemoryType, payload: &[FieldAssignment]) -> ParseResult<()> {
+    if memory_type != MemoryType::Semantic {
+        return Err(ParseError::Validation("FACT is only valid on SEMANTIC".into()));
+    }
+    let get = |f: &str| payload.iter().find(|a| a.field == f).map(|a| &a.value);
+    for f in ["subject", "predicate"] {
+        if !matches!(get(f), Some(Value::String(s)) if !s.is_empty()) && !matches!(get(f), Some(Value::Variable(_))) {
+            return Err(ParseError::Validation(format!("FACT needs {f} = \"…\"")));
+        }
+    }
+    match (get("object"), get("value")) {
+        (Some(Value::String(s)), None) if !s.is_empty() => Ok(()),
+        (Some(Value::Variable(_)), None) => Ok(()),
+        (None, Some(_)) => Ok(()),
+        (Some(_), None) => Err(ParseError::Validation("FACT object is an entity key: object = \"…\"".into())),
+        _ => Err(ParseError::Validation("FACT needs exactly one of object = \"entity key\" and value = …".into())),
+    }
 }
 
 /// Parse UPDATE statement
@@ -413,6 +505,19 @@ fn parse_unlink(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
     Ok(Statement::Unlink(UnlinkStmt { from_type, from_conditions, to_type, to_conditions, link_type }))
 }
 
+fn parse_merge(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
+    let mut inner = pair.into_inner();
+    let from = parse_string_literal(inner.next().ok_or(ParseError::Missing("entity to merge"))?)?;
+    let into = parse_string_literal(inner.next().ok_or(ParseError::Missing("entity to merge into"))?)?;
+    if from.is_empty() || into.is_empty() {
+        return Err(ParseError::Validation("MERGE needs two entity keys".into()));
+    }
+    if from == into {
+        return Err(ParseError::Validation("MERGE needs two different entities".into()));
+    }
+    Ok(Statement::Merge(MergeStmt { from, into }))
+}
+
 /// Parse memory type
 fn parse_memory_type(pair: pest::iterators::Pair<Rule>) -> ParseResult<MemoryType> {
     MemoryType::from_str(pair.as_str())
@@ -451,9 +556,13 @@ fn parse_predicate(pair: pest::iterators::Pair<Rule>) -> ParseResult<Predicate> 
         Rule::pattern_pred => {
             let mut parts = inner.into_inner();
             let var = parts.next().ok_or(ParseError::Missing("variable"))?;
-            let variable = parse_variable_name(var)?;
+            let text = if var.as_rule() == Rule::string_literal { Some(parse_string_literal(var.clone())?) } else { None };
+            let variable = match &text {
+                Some(t) => t.clone(),
+                None => parse_variable_name(var)?,
+            };
             let threshold = parts.next().map(|p| parse_float(p)).transpose()?;
-            Ok(Predicate::Pattern { variable, threshold })
+            Ok(Predicate::Pattern { variable, threshold, text })
         }
         Rule::all_pred => Ok(Predicate::All),
         _ => Err(ParseError::UnexpectedRule(format!("{:?}", inner.as_rule()))),
@@ -676,6 +785,9 @@ fn parse_modifier_into(
                 inner.into_inner().map(parse_aggregate_func).collect();
             mods.aggregate = Some(funcs?);
         }
+        Rule::group_by_mod => {
+            mods.group_by = Some(inner.into_inner().map(|f| f.as_str().to_string()).collect());
+        }
         Rule::having_mod => {
             let conditions =
                 parse_condition_list(inner.into_inner().next().ok_or(ParseError::Empty)?)?;
@@ -689,6 +801,15 @@ fn parse_modifier_into(
         }
         Rule::window_mod => {
             mods.window = Some(parse_window(inner)?);
+        }
+        Rule::as_of_mod => {
+            mods.as_of = Some(parse_time_point(inner.into_inner().next().ok_or(ParseError::Missing("time"))?)?);
+        }
+        Rule::valid_at_mod => {
+            mods.valid_at = Some(parse_time_point(inner.into_inner().next().ok_or(ParseError::Missing("time"))?)?);
+        }
+        Rule::with_history_mod => {
+            mods.with_history = true;
         }
         _ => {}
     }
@@ -727,28 +848,66 @@ fn parse_aggregate_func(pair: pest::iterators::Pair<Rule>) -> ParseResult<Aggreg
     Ok(AggregateFunc { func, field, alias })
 }
 
+/// The parts of a v0.8 link selection: `ALL` / `TYPE "t"` / `TYPE IN (...)`, the
+/// direction and `MIN_WEIGHT`, in any of WITH / FOLLOW LINKS.
+#[derive(Default)]
+struct LinkParts {
+    link_type: Option<String>,
+    link_types: Vec<String>,
+    direction: LinkDirection,
+    min_weight: Option<f64>,
+    depth: Option<u32>,
+}
+
+fn parse_link_parts(pair: pest::iterators::Pair<Rule>) -> ParseResult<LinkParts> {
+    let mut parts = LinkParts::default();
+    for p in pair.into_inner() {
+        match p.as_rule() {
+            Rule::link_select => {
+                let sel = p.into_inner().next().ok_or(ParseError::Missing("link type"))?;
+                match sel.as_rule() {
+                    Rule::link_type_one => {
+                        let lit = sel.into_inner().next().ok_or(ParseError::Missing("link type"))?;
+                        parts.link_type = Some(parse_string_literal(lit)?);
+                    }
+                    Rule::link_types_in => {
+                        parts.link_types = sel.into_inner().map(parse_string_literal).collect::<ParseResult<_>>()?;
+                    }
+                    _ => {}
+                }
+            }
+            Rule::link_direction => {
+                parts.direction = match p.as_str().to_ascii_uppercase().as_str() {
+                    "INBOUND" => LinkDirection::Inbound,
+                    "BOTH" => LinkDirection::Both,
+                    _ => LinkDirection::Outbound,
+                };
+            }
+            Rule::min_weight_mod => {
+                let n = p.into_inner().next().ok_or(ParseError::Missing("MIN_WEIGHT value"))?;
+                parts.min_weight = Some(n.as_str().parse().map_err(|_| ParseError::Missing("MIN_WEIGHT number"))?);
+            }
+            Rule::integer_literal => parts.depth = Some(parse_integer(p)? as u32),
+            _ => {}
+        }
+    }
+    Ok(parts)
+}
+
 /// Parse WITH LINKS modifier
 fn parse_with_links(pair: pest::iterators::Pair<Rule>) -> ParseResult<WithLinks> {
-    let inner = pair.into_inner().next();
-
-    match inner {
-        Some(p) if p.as_rule() == Rule::string_literal => {
-            Ok(WithLinks::Type {
-                link_type: parse_string_literal(p)?,
-            })
-        }
-        _ => Ok(WithLinks::All),
-    }
+    let LinkParts { link_type, link_types, direction, min_weight, .. } = parse_link_parts(pair)?;
+    Ok(match link_type {
+        Some(link_type) => WithLinks::Type { link_type, direction, min_weight },
+        None if !link_types.is_empty() => WithLinks::Types { link_types, direction, min_weight },
+        None => WithLinks::All { direction, min_weight },
+    })
 }
 
 /// Parse FOLLOW LINKS modifier
 fn parse_follow_links(pair: pest::iterators::Pair<Rule>) -> ParseResult<FollowLinks> {
-    let mut inner = pair.into_inner();
-
-    let link_type = parse_string_literal(inner.next().ok_or(ParseError::Missing("link type"))?)?;
-    let depth = inner.next().map(|p| parse_integer(p)).transpose()?.map(|n| n as u32);
-
-    Ok(FollowLinks { link_type, depth })
+    let LinkParts { link_type, link_types, direction, min_weight, depth } = parse_link_parts(pair)?;
+    Ok(FollowLinks { link_type, link_types, direction, min_weight, depth })
 }
 
 /// Parse WINDOW modifier
@@ -997,6 +1156,18 @@ fn parse_string_literal(pair: pest::iterators::Pair<Rule>) -> ParseResult<String
 }
 
 /// Parse variable name (remove $ or {})
+/// Parse a time point (v0.10): `"2026-10-01"`, `$t` or `7d AGO`.
+fn parse_time_point(pair: pest::iterators::Pair<Rule>) -> ParseResult<TimePoint> {
+    let inner = pair.into_inner().next().ok_or(ParseError::Missing("time"))?;
+    match inner.as_rule() {
+        Rule::time_ago => Ok(TimePoint::Ago {
+            duration: parse_duration(inner.into_inner().next().ok_or(ParseError::Missing("duration"))?)?,
+        }),
+        Rule::variable => Ok(TimePoint::Variable { name: parse_variable_name(inner)? }),
+        _ => Ok(TimePoint::At { time: parse_string_literal(inner)? }),
+    }
+}
+
 fn parse_variable_name(pair: pest::iterators::Pair<Rule>) -> ParseResult<String> {
     let s = pair.as_str();
     if s.starts_with('{') && s.ends_with('}') {
@@ -1104,15 +1275,26 @@ mod tests {
         let stmt = parse("LOOKUP FROM PROCEDURAL PATTERN $log_events THRESHOLD 0.7").unwrap();
         if let Statement::Lookup(l) = stmt {
             assert_eq!(l.memory_type, MemoryType::Procedural);
-            if let Predicate::Pattern { variable, threshold } = l.predicate {
+            if let Predicate::Pattern { variable, threshold, text } = l.predicate {
                 assert_eq!(variable, "log_events");
                 assert_eq!(threshold, Some(0.7));
+                assert_eq!(text, None);
             } else {
                 panic!("Expected Pattern predicate");
             }
         } else {
             panic!("Expected Lookup statement");
         }
+    }
+
+    #[test]
+    fn test_parse_pattern_literal() {
+        let stmt = parse(r#"LOOKUP FROM PROCEDURAL PATTERN "pod OOMKilled" THRESHOLD 0.5"#).unwrap();
+        let Statement::Lookup(l) = stmt else { panic!("Expected Lookup statement") };
+        let Predicate::Pattern { variable, threshold, text } = l.predicate else { panic!("Expected Pattern predicate") };
+        assert_eq!(text.as_deref(), Some("pod OOMKilled"));
+        assert_eq!(variable, "pod OOMKilled");
+        assert_eq!(threshold, Some(0.5));
     }
 
     #[test]
@@ -1225,7 +1407,7 @@ mod tests {
             assert_eq!(r.sources.len(), 2);
             assert!(matches!(
                 r.with_links,
-                Some(WithLinks::Type { link_type }) if link_type == "applied_to"
+                Some(WithLinks::Type { link_type, .. }) if link_type == "applied_to"
             ));
         } else {
             panic!("Expected Reflect statement");
@@ -1524,5 +1706,163 @@ mod tests {
             assert!(msg.contains("WHERE predicate"), "{q}: {msg}");
         }
         assert!(parse(r#"FORGET FROM WORKING WHERE a = "b""#).is_ok());
+    }
+
+    #[test]
+    fn test_v08_follow_links_selection() {
+        let follow = |q: &str| {
+            let Statement::Recall(r) = parse(q).unwrap() else { panic!("{q}") };
+            r.modifiers.follow_links.unwrap()
+        };
+        let f = follow(r#"RECALL FROM SEMANTIC WHERE a = 1 FOLLOW LINKS TYPE "t" DEPTH 2"#);
+        assert_eq!((f.link_type.as_deref(), f.direction, f.min_weight, f.depth), (Some("t"), LinkDirection::Outbound, None, Some(2)));
+        let f = follow(r#"RECALL FROM SEMANTIC WHERE a = 1 FOLLOW LINKS TYPE IN ("a", "b") INBOUND MIN_WEIGHT 0.5 DEPTH 3"#);
+        assert_eq!(f.link_types, ["a", "b"]);
+        assert_eq!((f.link_type, f.direction, f.min_weight, f.depth), (None, LinkDirection::Inbound, Some(0.5), Some(3)));
+        let f = follow(r#"RECALL FROM SEMANTIC WHERE a = 1 FOLLOW LINKS BOTH"#);
+        assert_eq!((f.link_type, f.link_types.len(), f.direction), (None, 0, LinkDirection::Both));
+        let f = follow(r#"RECALL FROM SEMANTIC WHERE a = 1 FOLLOW LINKS ALL MIN_WEIGHT 1"#);
+        assert_eq!((f.link_type, f.min_weight), (None, Some(1.0)));
+    }
+
+    #[test]
+    fn test_v08_with_links_selection() {
+        let Statement::Lookup(l) = parse(r#"LOOKUP FROM SEMANTIC KEY id = "a" WITH LINKS TYPE IN ("x") BOTH MIN_WEIGHT 0.2"#).unwrap() else {
+            panic!()
+        };
+        assert_eq!(
+            l.modifiers.with_links,
+            Some(WithLinks::Types { link_types: vec!["x".into()], direction: LinkDirection::Both, min_weight: Some(0.2) })
+        );
+    }
+
+    #[test]
+    fn test_v08_old_link_ast_json_unchanged() {
+        let Statement::Recall(r) = parse(r#"RECALL FROM SEMANTIC WHERE a = 1 WITH LINKS ALL FOLLOW LINKS TYPE "t""#).unwrap() else {
+            panic!()
+        };
+        assert_eq!(serde_json::to_value(&r.modifiers.with_links).unwrap(), serde_json::json!({ "type": "all" }));
+        assert_eq!(serde_json::to_value(&r.modifiers.follow_links).unwrap(), serde_json::json!({ "link_type": "t", "depth": null }));
+    }
+
+    #[test]
+    fn test_v08_store_fact() {
+        let Statement::Store(st) = parse(r#"STORE INTO SEMANTIC FACT (subject = "person:ada", predicate = "works_at", object = "org:acme", confidence = 0.9)"#).unwrap() else {
+            panic!()
+        };
+        assert_eq!(st.fact, Some(FactMode { multi: false }));
+        let Statement::Store(st) = parse(r#"STORE INTO SEMANTIC FACT MULTI (subject = "person:ada", predicate = "knows", object = "person:bob")"#).unwrap() else {
+            panic!()
+        };
+        assert_eq!(st.fact, Some(FactMode { multi: true }));
+        assert!(parse(r#"STORE INTO SEMANTIC FACT (subject = "a", predicate = "born", value = 1815)"#).is_ok());
+        assert!(parse(r#"STORE INTO SEMANTIC FACT (subject = $s, predicate = $p, object = $o)"#).is_ok());
+        for bad in [
+            r#"STORE INTO EPISODIC FACT (subject = "a", predicate = "p", object = "b")"#,
+            r#"STORE INTO SEMANTIC FACT (subject = "a", object = "b")"#,
+            r#"STORE INTO SEMANTIC FACT (subject = "a", predicate = "p")"#,
+            r#"STORE INTO SEMANTIC FACT (subject = "a", predicate = "p", object = "b", value = 1)"#,
+            r#"STORE INTO SEMANTIC FACT (subject = "a", predicate = "p", object = 3)"#,
+        ] {
+            assert!(parse(bad).is_err(), "{bad}");
+        }
+        // Without FACT: as before (and the AST JSON has no `fact`).
+        let Statement::Store(st) = parse(r#"STORE INTO SEMANTIC (key = "k", subject = "x")"#).unwrap() else { panic!() };
+        assert!(st.fact.is_none());
+        assert!(serde_json::to_value(&st).unwrap().get("fact").is_none());
+    }
+
+    #[test]
+    fn test_v09_group_by() {
+        let Statement::Recall(r) = parse(
+            "RECALL FROM EPISODIC WHERE campaign = \"summer\" GROUP BY url, metadata.scope \
+             AGGREGATE COUNT(*) AS n HAVING n > 1 ORDER BY n DESC LIMIT 10",
+        )
+        .unwrap() else { panic!() };
+        assert_eq!(r.modifiers.group_by, Some(vec!["url".to_string(), "metadata.scope".to_string()]));
+        assert!(r.modifiers.aggregate.is_some() && r.modifiers.having.is_some());
+        // AGGREGATE before GROUP BY parses the same
+        let Statement::Recall(r2) = parse("RECALL FROM EPISODIC WHERE a = 1 AGGREGATE COUNT(*) AS n GROUP BY url").unwrap() else { panic!() };
+        assert_eq!(r2.modifiers.group_by, Some(vec!["url".to_string()]));
+    }
+
+    #[test]
+    fn test_v09_group_by_and_having_need_aggregate() {
+        for q in ["RECALL FROM EPISODIC WHERE a = 1 GROUP BY url", "RECALL FROM EPISODIC WHERE a = 1 HAVING n > 1"] {
+            let e = parse(q).unwrap_err().to_string();
+            assert!(e.contains("requires AGGREGATE"), "{q}: {e}");
+        }
+        let e = parse("PIPELINE p TIMEOUT 1s RECALL FROM EPISODIC WHERE a = 1 GROUP BY url").unwrap_err().to_string();
+        assert!(e.contains("requires AGGREGATE"), "{e}");
+    }
+
+    #[test]
+    fn test_v09_no_group_by_json_unchanged() {
+        let Statement::Recall(r) = parse("RECALL FROM EPISODIC WHERE a = 1 AGGREGATE COUNT(*) AS n").unwrap() else { panic!() };
+        assert!(serde_json::to_value(&r.modifiers).unwrap().get("group_by").is_none());
+    }
+
+    #[test]
+    fn test_v09_window_on_episodic_recall_only() {
+        let Statement::Recall(r) = parse("RECALL FROM EPISODIC WHERE pod = \"api\" WINDOW LAST 7d").unwrap() else { panic!() };
+        assert!(r.modifiers.window.is_some());
+        parse("RECALL FROM EPISODIC WHERE pod = \"api\" WINDOW TOP 3 BY severity LIMIT 2").unwrap();
+        parse("SCAN FROM WORKING WINDOW LAST 10").unwrap();
+        for q in [
+            "RECALL FROM SEMANTIC WHERE a = 1 WINDOW LAST 10",
+            "LOOKUP FROM EPISODIC KEY id = \"e\" WINDOW LAST 10",
+            "FORGET FROM EPISODIC WHERE a = 1 WINDOW LAST 10",
+        ] {
+            let e = parse(q).unwrap_err().to_string();
+            assert!(e.contains("WINDOW is only valid"), "{q}: {e}");
+        }
+    }
+
+    #[test]
+    fn test_v10_time_modifiers() {
+        let Statement::Recall(r) = parse("RECALL FROM SEMANTIC WHERE subject = \"person:ada\" AS OF \"2026-10-01\"").unwrap() else { panic!() };
+        assert_eq!(r.modifiers.as_of, Some(TimePoint::At { time: "2026-10-01".into() }));
+        let Statement::Recall(r) = parse("RECALL FROM SEMANTIC WHERE a = 1 VALID AT $t WITH HISTORY LIMIT 5").unwrap() else { panic!() };
+        assert_eq!(r.modifiers.valid_at, Some(TimePoint::Variable { name: "t".into() }));
+        assert!(r.modifiers.with_history);
+        assert_eq!(r.modifiers.limit, Some(5));
+        let Statement::Lookup(l) = parse("LOOKUP FROM PROCEDURAL KEY pattern_id = \"p\" AS OF 7d AGO").unwrap() else { panic!() };
+        assert_eq!(l.modifiers.as_of, Some(TimePoint::Ago { duration: Duration::from_secs(7 * 86_400) }));
+        // WITH LINKS still parses; an alias before AS OF still does.
+        parse("RECALL FROM SEMANTIC WHERE a = 1 WITH LINKS ALL").unwrap();
+        let Statement::Recall(r) = parse("RECALL FROM SEMANTIC WHERE a = 1 AGGREGATE COUNT(*) AS n AS OF 1d AGO").unwrap() else { panic!() };
+        assert_eq!(r.modifiers.aggregate.as_ref().unwrap()[0].alias.as_deref(), Some("n"));
+        assert!(r.modifiers.as_of.is_some());
+        let Statement::Recall(r) = parse("RECALL FROM SEMANTIC WHERE a = 1 AGGREGATE COUNT(*) AS OF 1d AGO").unwrap() else { panic!() };
+        assert!(r.modifiers.as_of.is_some() && r.modifiers.aggregate.as_ref().unwrap()[0].alias.is_none());
+    }
+
+    #[test]
+    fn test_v10_time_modifiers_validation() {
+        for (q, msg) in [
+            ("RECALL FROM EPISODIC WHERE a = 1 AS OF 1d AGO", "only valid on SEMANTIC and PROCEDURAL"),
+            ("RECALL FROM PROCEDURAL WHERE a = 1 VALID AT \"2026-01-01\"", "VALID AT is only valid on SEMANTIC"),
+            ("SCAN FROM WORKING WITH HISTORY", "only valid on RECALL and LOOKUP"),
+            ("FORGET FROM SEMANTIC WHERE a = 1 AS OF 1d AGO", "only valid on RECALL and LOOKUP"),
+        ] {
+            let e = parse(q).unwrap_err().to_string();
+            assert!(e.contains(msg), "{q}: {e}");
+        }
+    }
+
+    #[test]
+    fn test_v10_merge() {
+        let s = parse(r#"MERGE ENTITY "person:ada-lovelace" INTO "person:ada""#).unwrap();
+        assert_eq!(s, Statement::Merge(MergeStmt { from: "person:ada-lovelace".into(), into: "person:ada".into() }));
+        assert!(parse(r#"merge entity "a" into "b""#).is_ok());
+        assert!(parse(r#"MERGE ENTITY "a" INTO "a""#).unwrap_err().to_string().contains("two different entities"));
+        assert!(parse(r#"MERGE ENTITY "" INTO "a""#).is_err());
+        assert!(parse(r#"MERGE ENTITY "a""#).is_err());
+    }
+
+    #[test]
+    fn test_v10_no_time_json_unchanged() {
+        let json = serde_json::to_string(&parse("RECALL FROM SEMANTIC WHERE a = 1 LIMIT 2").unwrap()).unwrap();
+        assert!(!json.contains("as_of") && !json.contains("with_history") && !json.contains("valid_at"), "{json}");
     }
 }

@@ -401,7 +401,7 @@ impl MemoryStore {
     }
 
     /// Follow links from records to get target records
-    pub fn follow_links(&self, source_ids: &[String], link_type: &str, depth: u32) -> Vec<&Record> {
+    pub fn follow_links(&self, source_ids: &[String], link_type: Option<&str>, depth: u32) -> Vec<&Record> {
         let mut visited = std::collections::HashSet::new();
         let mut current_ids: Vec<String> = source_ids.to_vec();
         let mut result = Vec::new();
@@ -414,7 +414,7 @@ impl MemoryStore {
                 }
                 visited.insert(source_id.clone());
 
-                for link in self.get_links_from(source_id, Some(link_type)) {
+                for link in self.get_links_from(source_id, link_type) {
                     if !visited.contains(&link.target_id) {
                         if let Some(record) = self.get_record(&link.target_id) {
                             result.push(record);

@@ -125,5 +125,5 @@ reserved as field names.
 | `aql-parser` grammar, AST (`SubscribeStmt`, `UnsubscribeStmt`, `AckStmt`, `PublishStmt`, `WatchStmt`, `UnwatchStmt`, `Modifiers.in_scope`) | Done — 11 parser tests |
 | v0.5 compatibility | Verified: all 132 conformance + seed queries produce identical ASTs |
 | ClawDB executor, WASM playground | Reject the new statements with "not supported yet" |
-| ADB execution | Pending (single-node milestone for subscriptions; CQs after recall indexes) |
-| Conformance suite | v0.6 suite to be written with the ADB implementation |
+| ADB execution | Done: subscriptions (stage E), `WATCH` (W6), `IN SCOPE` (W3) |
+| Conformance suite | `tests/suites/18_subscriptions.yaml`, `19_watch.yaml`, `20_in_scope.yaml` (42 tests, `requires: server`); ADB 182/182 with all suites (28 Oct) |

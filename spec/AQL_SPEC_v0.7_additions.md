@@ -86,12 +86,25 @@ UNLINK FROM SEMANTIC WHERE key = "acme-owner" TO SEMANTIC WHERE key = "acme-rene
 `UNLINK`. (`UPDATE`, `LINK`, `TYPE`, `WEIGHT` already exist.) Case-insensitive; not
 reserved as field names.
 
+## 4a. `PATTERN` with a text literal (28 Oct)
+
+v0.5 §6 defines `similarity_pred ::= "PATTERN" expression`, but the grammar accepted
+only a variable. v0.7 also accepts a string literal:
+
+```sql
+LOOKUP FROM PROCEDURAL PATTERN "pod OOMKilled restart loop" THRESHOLD 0.6
+LOOKUP FROM PROCEDURAL PATTERN $events THRESHOLD 0.6   -- $events bound by the request or an earlier pipeline stage
+```
+
+The AST's `Predicate::Pattern` gains `text: Option<String>` (the literal; omitted
+from JSON when absent, so v0.5 / v0.6 ASTs are unchanged).
+
 ## 5. Implementation status
 
 | Component | Status |
 |---|---|
-| `aql-parser` grammar, AST (`UpdateLinkStmt`, `UnlinkStmt`) | Done — 4 parser tests |
+| `aql-parser` grammar, AST (`UpdateLinkStmt`, `UnlinkStmt`, `Pattern.text`) | Done — 5 parser tests |
 | WASM playground (`clawdb-wasm`) | Done in source; the built `pkg/` needs `wasm-pack build crates/clawdb-wasm` (not run here) |
 | ClawDB server (`clawdb`) | Rejects them ("ADB implements them") |
-| ADB | Done (durable and in-memory engines; MCP `unlink` tool) |
+| ADB | Done (durable and in-memory engines; MCP `unlink` tool); `PATTERN` literal and bound `$var` (W9) |
 | Conformance | `tests/suites/22_link_update.yaml`, 24 tests (ADB 140/140 with all suites); the runner now checks `links_count`, `links_contains`, `links_present`, `links_type_only` |

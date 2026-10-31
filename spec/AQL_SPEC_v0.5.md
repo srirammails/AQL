@@ -654,6 +654,10 @@ RECALL FROM EPISODIC WHERE strategy = "tech_news_premium"
 
 ## 14. All Modifiers
 
+> **Update (30 Oct 2026):** `weight_mod`, `threshold_mod` and `source_mod` below were
+> never in the grammar and are withdrawn; the current list is in
+> [`AQL_SPEC_v0.9_additions.md`](AQL_SPEC_v0.9_additions.md) §4.
+
 ```bnf
 modifier       ::= return_mod
                  | limit_mod
@@ -1143,7 +1147,7 @@ SCAN only valid on WORKING:
 LOAD only valid on TOOLS:
   LOAD FROM EPISODIC → error: "LOAD only valid on TOOLS."
 
-WINDOW only valid on SCAN FROM WORKING:
+WINDOW only valid on SCAN FROM WORKING (v0.9 §2: and RECALL FROM EPISODIC):
   RECALL FROM EPISODIC WINDOW LAST 10 → error
 
 FORGET predicate required:

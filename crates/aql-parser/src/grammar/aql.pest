@@ -26,6 +26,7 @@ statement = {
   | forget_stmt
   | link_stmt
   | unlink_stmt
+  | merge_stmt
   | subscribe_stmt
   | unsubscribe_stmt
   | ack_stmt
@@ -113,9 +114,14 @@ load_stmt = {
 // ============================================================================
 
 // STORE INTO EPISODIC (incident_id = "inc-001", pod = "payments") TTL 7d
+// v0.8: STORE INTO SEMANTIC FACT [MULTI] (subject = "person:ada", predicate = "works_at",
+//   object = "org:acme" | value = …, confidence = 0.9, source = "chat:1")
 store_stmt = {
-    ^"STORE" ~ ^"INTO" ~ memory_type ~ payload ~ modifier*
+    ^"STORE" ~ ^"INTO" ~ memory_type ~ fact_mod? ~ payload ~ modifier*
 }
+
+fact_mod = { ^"FACT" ~ multi_kw? }
+multi_kw = { ^"MULTI" }
 
 // UPDATE INTO PROCEDURAL WHERE pattern_id = "oom-fix" (confidence = 0.9)
 update_stmt = {
@@ -159,6 +165,11 @@ unlink_stmt = {
     ^"TO" ~ memory_type ~ ^"WHERE" ~ condition_list ~
     link_type_filter?
 }
+
+// v0.10: merge a duplicate entity into another (SEMANTIC); the duplicate's key
+// becomes an alias of the survivor.
+// MERGE ENTITY "person:ada-lovelace" INTO "person:ada"
+merge_stmt = { ^"MERGE" ~ ^"ENTITY" ~ string_literal ~ ^"INTO" ~ string_literal }
 
 link_type_filter = { ^"TYPE" ~ string_literal }
 link_weight_set = { ^"WEIGHT" ~ float_literal }
@@ -226,7 +237,7 @@ predicate = {
 where_pred = { ^"WHERE" ~ condition_list }
 key_pred = { ^"KEY" ~ identifier ~ "=" ~ value }
 like_pred = { ^"LIKE" ~ variable }
-pattern_pred = { ^"PATTERN" ~ variable ~ (^"THRESHOLD" ~ float_literal)? }
+pattern_pred = { ^"PATTERN" ~ (variable | string_literal) ~ (^"THRESHOLD" ~ float_literal)? }
 all_pred = { ^"ALL" }
 
 // ============================================================================
@@ -275,11 +286,15 @@ modifier = {
   | namespace_mod
   | ttl_mod
   | aggregate_mod
+  | group_by_mod
   | having_mod
   | with_links_mod
   | follow_links_mod
   | window_mod
   | in_scope_mod
+  | as_of_mod
+  | valid_at_mod
+  | with_history_mod
 }
 
 // v0.6: named scope, e.g. STORE INTO SEMANTIC (...) IN SCOPE "team:billing".
@@ -315,18 +330,35 @@ agg_func = {
     agg_func_name ~ "(" ~ (field_path | "*") ~ ")" ~ agg_alias?
 }
 
-agg_alias = { ^"AS" ~ identifier }
+// `AS OF` after an aggregate is the time modifier, not an alias named OF.
+agg_alias = { ^"AS" ~ !of_kw ~ identifier }
+of_kw = @{ ^"OF" ~ !(ASCII_ALPHANUMERIC | "_" | "-") }
 
 agg_func_name = { ^"COUNT" | ^"AVG" | ^"SUM" | ^"MIN" | ^"MAX" }
+
+// v0.9: GROUP BY url, region (with AGGREGATE: one result row per group)
+group_by_mod = { ^"GROUP" ~ ^"BY" ~ field_path ~ ("," ~ field_path)* }
 
 // HAVING uses > 10 AND avg_ctr < 0.01
 having_mod = { ^"HAVING" ~ condition_list }
 
 // WITH LINKS ALL | WITH LINKS TYPE "applied_to"
-with_links_mod = { ^"WITH" ~ ^"LINKS" ~ (^"ALL" | (^"TYPE" ~ string_literal)) }
+// v0.8: TYPE IN ("a", "b"), INBOUND / BOTH, MIN_WEIGHT 0.5
+with_links_mod = { ^"WITH" ~ ^"LINKS" ~ link_select ~ link_direction? ~ min_weight_mod? }
 
 // FOLLOW LINKS TYPE "triggers"
-follow_links_mod = { ^"FOLLOW" ~ ^"LINKS" ~ ^"TYPE" ~ string_literal ~ (^"DEPTH" ~ integer_literal)? }
+// v0.8: FOLLOW LINKS [ALL | TYPE "t" | TYPE IN (...)] [OUTBOUND | INBOUND | BOTH]
+//   [MIN_WEIGHT w] [DEPTH n]; no type = every type
+follow_links_mod = {
+    ^"FOLLOW" ~ ^"LINKS" ~ link_select? ~ link_direction? ~ min_weight_mod? ~ (^"DEPTH" ~ integer_literal)?
+}
+
+link_select = { link_types_all | link_types_in | link_type_one }
+link_types_all = { ^"ALL" }
+link_types_in = { ^"TYPE" ~ ^"IN" ~ "(" ~ string_literal ~ ("," ~ string_literal)* ~ ")" }
+link_type_one = { ^"TYPE" ~ string_literal }
+link_direction = { ^"OUTBOUND" | ^"INBOUND" | ^"BOTH" }
+min_weight_mod = { ^"MIN_WEIGHT" ~ (float_literal | integer_literal) }
 
 // WINDOW LAST 10 | WINDOW LAST 30s | WINDOW TOP 3 BY attention_weight | WINDOW SINCE event_id = "inc-001"
 window_mod = {
@@ -336,6 +368,18 @@ window_mod = {
       | (^"SINCE" ~ simple_condition)
     )
 }
+
+// v0.10: AS OF "2026-10-01" | AS OF $t | AS OF 7d AGO — the memory as it was then
+as_of_mod = { ^"AS" ~ ^"OF" ~ time_point }
+
+// v0.10: VALID AT "1835-01-01" — facts that held then, as known now
+valid_at_mod = { ^"VALID" ~ ^"AT" ~ time_point }
+
+// v0.10: WITH HISTORY — every version, current and replaced
+with_history_mod = { ^"WITH" ~ ^"HISTORY" }
+
+time_point = { time_ago | string_literal | variable }
+time_ago = { duration_literal ~ ^"AGO" }
 
 // ============================================================================
 // Memory Types

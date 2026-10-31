@@ -34,6 +34,7 @@ pub fn execute_statement(stmt: &Statement, store: &mut MemoryStore) -> QueryResu
         | Statement::Unwatch(_) => QueryResult::err(
             "Subscriptions and continuous queries (AQL v0.6 draft) are not supported in the playground",
         ),
+        Statement::Merge(_) => QueryResult::err("MERGE ENTITY (AQL v0.10 draft) is not supported in the playground yet"),
     }
 }
 
@@ -73,6 +74,12 @@ fn execute_store(stmt: &StoreStmt, store: &mut MemoryStore) -> QueryResult {
 
 /// Execute RECALL statement
 fn execute_recall(stmt: &RecallStmt, store: &mut MemoryStore) -> QueryResult {
+    if stmt.modifiers.group_by.is_some() || stmt.modifiers.window.is_some() {
+        return QueryResult::err("GROUP BY and WINDOW on RECALL (AQL v0.9 draft) are not supported in the playground yet");
+    }
+    if let Some(e) = time_unsupported(&stmt.modifiers) {
+        return e;
+    }
     // Handle SEMANTIC with LIKE predicate
     if matches!(stmt.memory_type, MemoryType::Semantic) {
         return execute_semantic_recall(stmt, store);
@@ -94,7 +101,7 @@ fn execute_recall(stmt: &RecallStmt, store: &mut MemoryStore) -> QueryResult {
             .filter_map(|v| v.get("id").and_then(|id| id.as_str()).map(|s| s.to_string()))
             .collect();
         let depth = follow.depth.unwrap_or(1);
-        let linked = store.follow_links(&source_ids, &follow.link_type, depth);
+        let linked = store.follow_links(&source_ids, follow.link_type.as_deref(), depth);
         let linked_values: Vec<Value> = linked.iter()
             .map(|r| serde_json::to_value(r).unwrap())
             .collect();
@@ -273,6 +280,9 @@ fn matches_having(results: &Value, conditions: &[Condition]) -> bool {
 
 /// Execute LOOKUP statement
 fn execute_lookup(stmt: &LookupStmt, store: &mut MemoryStore) -> QueryResult {
+    if let Some(e) = time_unsupported(&stmt.modifiers) {
+        return e;
+    }
     let records = match query_records(store, &stmt.memory_type, &stmt.predicate, &stmt.modifiers) {
         Ok(r) => r,
         Err(e) => return QueryResult::err(&e),
@@ -535,8 +545,13 @@ fn execute_reflect(stmt: &ReflectStmt, store: &mut MemoryStore) -> QueryResult {
         for record in &all_records {
             if let Some(id) = record.get("id").and_then(|v| v.as_str()) {
                 let record_links = match with_links {
-                    WithLinks::All => store.get_links_from(id, None),
-                    WithLinks::Type { link_type } => store.get_links_from(id, Some(link_type)),
+                    WithLinks::All { .. } => store.get_links_from(id, None),
+                    WithLinks::Type { link_type, .. } => store.get_links_from(id, Some(link_type)),
+                    WithLinks::Types { link_types, .. } => store
+                        .get_links_from(id, None)
+                        .into_iter()
+                        .filter(|l| link_types.contains(&l.link_type))
+                        .collect(),
                 };
                 for link in record_links {
                     links.push(serde_json::to_value(link).unwrap());
@@ -554,7 +569,7 @@ fn execute_reflect(stmt: &ReflectStmt, store: &mut MemoryStore) -> QueryResult {
             .filter_map(|r| r.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
             .collect();
         let depth = follow.depth.unwrap_or(1);
-        let linked = store.follow_links(&source_ids, &follow.link_type, depth);
+        let linked = store.follow_links(&source_ids, follow.link_type.as_deref(), depth);
         let linked_values: Vec<Value> = linked.iter()
             .map(|r| serde_json::to_value(r).unwrap())
             .collect();
@@ -681,10 +696,14 @@ fn query_records(
         records.iter().map(|r| {
             let mut record_json = serde_json::to_value(r).unwrap();
             let links: Vec<Value> = match with_links {
-                WithLinks::All => r.get_all_links().iter()
+                WithLinks::All { .. } => r.get_all_links().iter()
                     .map(|l| serde_json::to_value(l).unwrap())
                     .collect(),
-                WithLinks::Type { link_type } => r.get_links_by_type(link_type).iter()
+                WithLinks::Type { link_type, .. } => r.get_links_by_type(link_type).iter()
+                    .map(|l| serde_json::to_value(l).unwrap())
+                    .collect(),
+                WithLinks::Types { link_types, .. } => r.get_all_links().iter()
+                    .filter(|l| link_types.contains(&l.link_type))
                     .map(|l| serde_json::to_value(l).unwrap())
                     .collect(),
             };
@@ -937,4 +956,10 @@ fn project_fields(record: &Record, fields: &[String]) -> Value {
     }
 
     Value::Object(result)
+}
+
+/// History reads (AQL v0.10 draft) need versions the playground doesn't keep.
+fn time_unsupported(mods: &Modifiers) -> Option<QueryResult> {
+    (mods.as_of.is_some() || mods.valid_at.is_some() || mods.with_history)
+        .then(|| QueryResult::err("AS OF, VALID AT and WITH HISTORY (AQL v0.10 draft) are not supported in the playground yet"))
 }

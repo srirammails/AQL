@@ -1,0 +1,155 @@
+# AQL v0.10 draft Test Suite - fact validity and history reads
+# `valid_from` / `valid_to` on STORE ... FACT; AS OF, VALID AT and WITH HISTORY on
+# RECALL / LOOKUP (spec/AQL_SPEC_v0.10_additions.md). The suite's records are written
+# within the run, so `AS OF 1h AGO` sees none of them.
+
+suite: TIME
+spec_section: "v0.10"
+total_tests: 18
+
+tests:
+  - id: T27-01
+    name: "setup: a fact that held in the past"
+    query: |
+      STORE INTO SEMANTIC FACT (subject = "t27:ada", predicate = "worked_at", object = "t27:old", valid_from = "2010-01-01", valid_to = "2020-01-01")
+    expect:
+      success: true
+
+  - id: T27-02
+    name: "setup: a fact that holds now"
+    query: |
+      STORE INTO SEMANTIC FACT (subject = "t27:ada", predicate = "works_at", object = "t27:acme", valid_from = "2020-01-01")
+    expect:
+      success: true
+
+  - id: T27-03
+    name: "setup: a fact that holds later"
+    query: |
+      STORE INTO SEMANTIC FACT (subject = "t27:ada", predicate = "moves_to", object = "t27:york", valid_from = "2999-01-01")
+    expect:
+      success: true
+
+  - id: T27-04
+    name: "current view: only the fact that holds now"
+    query: |
+      RECALL FROM SEMANTIC WHERE subject = "t27:ada"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.object": "t27:acme", "data.records.0.data.valid_from": "2020-01-01T00:00:00Z"}
+
+  - id: T27-05
+    name: "a fact outside its validity is not a link to follow"
+    query: |
+      LOOKUP FROM SEMANTIC KEY id = "t27:ada" FOLLOW LINKS ALL
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.id": "t27:acme"}
+
+  - id: T27-06
+    name: "VALID AT a past time"
+    query: |
+      RECALL FROM SEMANTIC WHERE subject = "t27:ada" VALID AT "2015-06-01"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.object": "t27:old"}
+
+  - id: T27-07
+    name: "VALID AT a future time"
+    query: |
+      RECALL FROM SEMANTIC WHERE subject = "t27:ada" VALID AT "3000-01-01T00:00:00Z"
+    expect:
+      success: true
+      count: 2
+
+  - id: T27-08
+    name: "WITH HISTORY: every version, whatever its validity"
+    query: |
+      RECALL FROM SEMANTIC WHERE subject = "t27:ada" WITH HISTORY
+    expect:
+      success: true
+      count: 3
+      fields_exist: ["data.records.0.data._recorded_at"]
+
+  - id: T27-09
+    name: "setup: supersede the current fact"
+    query: |
+      STORE INTO SEMANTIC FACT (subject = "t27:ada", predicate = "works_at", object = "t27:globex")
+    expect:
+      success: true
+
+  - id: T27-10
+    name: "WITH HISTORY keeps the replaced version"
+    query: |
+      RECALL FROM SEMANTIC WHERE predicate = "works_at" AND subject = "t27:ada" WITH HISTORY
+    expect:
+      success: true
+      count: 2
+      fields: {"data.records.0.data.object": "t27:acme", "data.records.0.metadata.version": 1, "data.records.1.metadata.version": 2}
+      fields_exist: ["data.records.0.data._replaced_at"]
+
+  - id: T27-11
+    name: "AS OF before the run: nothing"
+    query: |
+      RECALL FROM SEMANTIC WHERE subject = "t27:ada" AS OF 1h AGO
+    expect:
+      success: true
+      count: 0
+
+  - id: T27-12
+    name: "AS OF a later time is the current view then"
+    query: |
+      RECALL FROM SEMANTIC WHERE predicate = "moves_to" AND subject = "t27:ada" AS OF "2999-06-01"
+    expect:
+      success: true
+      count: 1
+
+  - id: T27-13
+    name: "WITH HISTORY counts versions"
+    query: |
+      RECALL FROM SEMANTIC WHERE subject = "t27:ada" WITH HISTORY AGGREGATE COUNT(*) AS n
+    expect:
+      success: true
+      values: {"n": 4}
+
+  - id: T27-14
+    name: "valid_from must be before valid_to"
+    query: |
+      STORE INTO SEMANTIC FACT (subject = "t27:a", predicate = "p", value = 1, valid_from = "2020-01-02", valid_to = "2020-01-01")
+    expect:
+      success: false
+      error_contains: "valid_from must be before valid_to"
+
+  - id: T27-15
+    name: "a bound is a date or a time"
+    query: |
+      STORE INTO SEMANTIC FACT (subject = "t27:a", predicate = "p", value = 1, valid_to = "soon")
+    expect:
+      success: false
+      error_contains: "valid_to"
+
+  - id: T27-16
+    name: "history reads only on SEMANTIC and PROCEDURAL"
+    query: |
+      RECALL FROM EPISODIC WHERE a = 1 AS OF 1h AGO
+    expect:
+      success: false
+      error_contains: "only valid on SEMANTIC and PROCEDURAL"
+
+  - id: T27-17
+    name: "VALID AT only on SEMANTIC"
+    query: |
+      LOOKUP FROM PROCEDURAL KEY pattern_id = "p" VALID AT "2020-01-01"
+    expect:
+      success: false
+      error_contains: "VALID AT is only valid on SEMANTIC"
+
+  - id: T27-18
+    name: "FORGET removes facts outside their validity, and their history"
+    query: |
+      FORGET FROM SEMANTIC WHERE subject = "t27:ada"
+    expect:
+      success: true
+      count: 3

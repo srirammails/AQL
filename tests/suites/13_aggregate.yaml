@@ -100,7 +100,7 @@ tests:
       success: true
       values:
         n: 2
-        mean_cpm: 3.75
+        mean_cpm: 3.85   # 06_update sets ai_enterprise_content avg_cpm 3.40 -> 3.60
 
   - id: T13-09
     name: "COUNT PROCEDURAL (B3)"
@@ -112,7 +112,7 @@ tests:
       success: true
       values:
         n: 1
-        avg_conf: 0.72
+        avg_conf: 0.85   # 06_update sets tech_news_premium confidence 0.72 -> 0.85
 
   - id: T13-10
     name: "COUNT TOOLS (B27)"

@@ -106,6 +106,7 @@ impl Executor {
             Statement::UpdateLink(_) | Statement::Unlink(_) => Err(ClawError::InvalidQuery(
                 "UPDATE LINK / UNLINK (AQL v0.7 draft) are not supported by ClawDB; ADB implements them".into(),
             )),
+            Statement::Merge(_) => Err(ClawError::InvalidQuery("MERGE ENTITY (AQL v0.10 draft) is not supported by ClawDB; ADB implements it".into())),
         }
     }
 
@@ -167,6 +168,10 @@ impl Executor {
         links: &Arc<RwLock<LinksStorage>>,
         variables: &HashMap<String, Value>,
     ) -> ClawResult<QueryData> {
+        if stmt.modifiers.group_by.is_some() || stmt.modifiers.window.is_some() {
+            return Err(ClawError::InvalidQuery("GROUP BY and WINDOW on RECALL (AQL v0.9 draft) are not supported by ClawDB; ADB implements them".into()));
+        }
+        check_time(&stmt.modifiers)?;
         // Handle FROM ALL
         if matches!(stmt.memory_type, AqlMemoryType::All) {
             return self.execute_recall_all(backends, &stmt.predicate, &stmt.modifiers, variables).await;
@@ -182,7 +187,7 @@ impl Executor {
 
         // Handle FOLLOW LINKS
         if let Some(follow) = &stmt.modifiers.follow_links {
-            records = self.follow_links(&records, backends, links, &follow.link_type, follow.depth).await?;
+            records = self.follow_links(&records, backends, links, follow.link_type.as_deref(), follow.depth).await?;
         }
 
         let count = records.len();
@@ -199,7 +204,7 @@ impl Executor {
         source_records: &[MemoryRecord],
         backends: &HashMap<MemoryType, Arc<LanceBackend>>,
         links: &Arc<RwLock<LinksStorage>>,
-        link_type: &str,
+        link_type: Option<&str>,
         _depth: Option<u32>,
     ) -> ClawResult<Vec<MemoryRecord>> {
         let links_guard = links.read().await;
@@ -208,7 +213,7 @@ impl Executor {
         // Find links from source records with matching type
         let matching_links: Vec<&Link> = links_guard
             .iter()
-            .filter(|l| source_ids.contains(&l.source_id.as_str()) && l.link_type == link_type)
+            .filter(|l| source_ids.contains(&l.source_id.as_str()) && link_type.map_or(true, |t| l.link_type == t))
             .collect();
 
         if matching_links.is_empty() {
@@ -280,6 +285,7 @@ impl Executor {
         backends: &HashMap<MemoryType, Arc<LanceBackend>>,
         variables: &HashMap<String, Value>,
     ) -> ClawResult<QueryData> {
+        check_time(&stmt.modifiers)?;
         // Validation: LOOKUP only valid on SEMANTIC, PROCEDURAL, TOOLS
         match stmt.memory_type {
             AqlMemoryType::Working => {
@@ -806,4 +812,12 @@ fn compare_json_values(a: &Option<Value>, b: &Option<Value>) -> std::cmp::Orderi
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (None, None) => std::cmp::Ordering::Equal,
     }
+}
+
+/// History reads (AQL v0.10 draft) need versions ClawDB doesn't keep.
+fn check_time(mods: &aql_parser::Modifiers) -> ClawResult<()> {
+    if mods.as_of.is_some() || mods.valid_at.is_some() || mods.with_history {
+        return Err(ClawError::InvalidQuery("AS OF, VALID AT and WITH HISTORY (AQL v0.10 draft) are not supported by ClawDB; ADB implements them".into()));
+    }
+    Ok(())
 }

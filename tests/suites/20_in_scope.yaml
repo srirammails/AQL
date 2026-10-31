@@ -1,0 +1,131 @@
+# AQL v0.6 Test Suite - Named scopes (IN SCOPE)
+# spec/AQL_SPEC_v0.6_additions.md §4. IN SCOPE names a memory boundary; reads,
+# writes and forgets in one scope don't see or touch another.
+
+suite: IN_SCOPE
+spec_section: "v0.6 §4"
+requires: server
+total_tests: 15
+
+tests:
+  - id: T20-01
+    name: "STORE in agent:conf-1"
+    query: |
+      STORE INTO SEMANTIC (key = "cs-1", owner = "cs-a") IN SCOPE "agent:conf-1"
+    expect:
+      success: true
+
+  - id: T20-02
+    name: "STORE in agent:conf-2"
+    query: |
+      STORE INTO SEMANTIC (key = "cs-2", owner = "cs-b") IN SCOPE "agent:conf-2"
+    expect:
+      success: true
+
+  - id: T20-03
+    name: "IN SCOPE after the memory type"
+    query: |
+      RECALL FROM SEMANTIC IN SCOPE "agent:conf-1" ALL
+    expect:
+      success: true
+      count: 1
+      contains:
+        - owner: "cs-a"
+
+  - id: T20-04
+    name: "IN SCOPE among the modifiers"
+    query: |
+      RECALL FROM SEMANTIC ALL IN SCOPE "agent:conf-2"
+    expect:
+      success: true
+      count: 1
+      contains:
+        - owner: "cs-b"
+
+  - id: T20-05
+    name: "IN membership inside WHERE, then IN SCOPE"
+    query: |
+      RECALL FROM SEMANTIC WHERE owner IN ["cs-a", "cs-b"] IN SCOPE "agent:conf-1"
+    expect:
+      success: true
+      count: 1
+
+  - id: T20-06
+    name: "LOOKUP by key in another scope finds nothing"
+    query: |
+      LOOKUP FROM SEMANTIC IN SCOPE "agent:conf-2" KEY id = "cs-1"
+    expect:
+      success: true
+      count: 0
+
+  - id: T20-07
+    name: "UPDATE in another scope changes nothing"
+    query: |
+      UPDATE INTO SEMANTIC WHERE owner = "cs-a" (owner = "cs-a2") IN SCOPE "agent:conf-2"
+    expect:
+      success: true
+      count: 0
+
+  - id: T20-08
+    name: "UPDATE in its own scope"
+    query: |
+      UPDATE INTO SEMANTIC WHERE owner = "cs-a" (owner = "cs-a2") IN SCOPE "agent:conf-1"
+    expect:
+      success: true
+      count: 1
+
+  - id: T20-09
+    name: "FORGET in another scope forgets nothing"
+    query: |
+      FORGET FROM SEMANTIC WHERE owner = "cs-b" IN SCOPE "agent:conf-1"
+    expect:
+      success: true
+      count: 0
+
+  - id: T20-10
+    name: "the other scope's record is still there"
+    query: |
+      RECALL FROM SEMANTIC IN SCOPE "agent:conf-2" WHERE owner = "cs-b"
+    expect:
+      success: true
+      count: 1
+
+  - id: T20-11
+    name: "IN SCOPE together with SCOPE shared"
+    query: |
+      STORE INTO SEMANTIC (key = "cs-sh", owner = "cs-t") SCOPE shared IN SCOPE "team:conf"
+    expect:
+      success: true
+
+  - id: T20-12
+    name: "RECALL IN SCOPE … SCOPE shared"
+    query: |
+      RECALL FROM SEMANTIC IN SCOPE "team:conf" ALL SCOPE shared
+    expect:
+      success: true
+      count: 1
+      contains:
+        - owner: "cs-t"
+
+  - id: T20-13
+    name: "EPISODIC in a named scope"
+    query: |
+      STORE INTO EPISODIC (key = "cs-ep", event = "deploy") IN SCOPE "agent:conf-1"
+    expect:
+      success: true
+
+  - id: T20-14
+    name: "IN SCOPE on WORKING is refused (long-term memory types only)"
+    query: |
+      STORE INTO WORKING (key = "cs-wk") IN SCOPE "agent:conf-1"
+    expect:
+      success: false
+      error_contains: "IN SCOPE on"
+
+  - id: T20-15
+    name: "a malformed scope name is refused"
+    query: |
+      RECALL FROM SEMANTIC IN SCOPE "bad scope!" ALL
+    expect:
+      success: false
+      error_contains: "IN SCOPE"

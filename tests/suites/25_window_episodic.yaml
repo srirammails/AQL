@@ -1,0 +1,113 @@
+# AQL v0.9 draft Test Suite - WINDOW on RECALL FROM EPISODIC
+# The window runs over the episodes in commit order, before ORDER BY / LIMIT /
+# AGGREGATE (spec/AQL_SPEC_v0.9_additions.md §2). Setup: five episodes w25, n 1..5.
+
+suite: WINDOW_EPISODIC
+spec_section: "v0.9 §2"
+total_tests: 13
+
+tests:
+  - id: T25-01
+    name: "setup: episode 1"
+    query: |
+      STORE INTO EPISODIC (w25 = "t25", n = 1, sev = 3)
+    expect:
+      success: true
+
+  - id: T25-02
+    name: "setup: episode 2"
+    query: |
+      STORE INTO EPISODIC (w25 = "t25", n = 2, sev = 9)
+    expect:
+      success: true
+
+  - id: T25-03
+    name: "setup: episode 3"
+    query: |
+      STORE INTO EPISODIC (w25 = "t25", n = 3, sev = 1)
+    expect:
+      success: true
+
+  - id: T25-04
+    name: "setup: episode 4"
+    query: |
+      STORE INTO EPISODIC (w25 = "t25", n = 4, sev = 7)
+    expect:
+      success: true
+
+  - id: T25-05
+    name: "setup: episode 5"
+    query: |
+      STORE INTO EPISODIC (w25 = "t25", n = 5, sev = 5)
+    expect:
+      success: true
+
+  - id: T25-06
+    name: "WINDOW LAST n keeps the newest n"
+    query: |
+      RECALL FROM EPISODIC WHERE w25 = "t25" WINDOW LAST 2 RETURN n
+    expect:
+      success: true
+      count: 2
+      fields: {"data.records.0.data.n": 5, "data.records.1.data.n": 4}
+
+  - id: T25-07
+    name: "WINDOW LAST duration"
+    query: |
+      RECALL FROM EPISODIC WHERE w25 = "t25" WINDOW LAST 1h RETURN n
+    expect:
+      success: true
+      count: 5
+
+  - id: T25-08
+    name: "WINDOW SINCE condition"
+    query: |
+      RECALL FROM EPISODIC WHERE w25 = "t25" WINDOW SINCE n = 3 RETURN n
+    expect:
+      success: true
+      count: 3
+      fields: {"data.records.2.data.n": 3}
+
+  - id: T25-09
+    name: "WINDOW TOP n BY field"
+    query: |
+      RECALL FROM EPISODIC WHERE w25 = "t25" WINDOW TOP 2 BY sev ORDER BY sev DESC RETURN n
+    expect:
+      success: true
+      count: 2
+      fields: {"data.records.0.data.n": 2, "data.records.1.data.n": 4}
+
+  - id: T25-10
+    name: "window first, then ORDER BY and LIMIT"
+    query: |
+      RECALL FROM EPISODIC WHERE w25 = "t25" WINDOW LAST 3 ORDER BY sev DESC LIMIT 1 RETURN n
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.n": 4}
+
+  - id: T25-11
+    name: "window before AGGREGATE"
+    query: |
+      RECALL FROM EPISODIC WHERE w25 = "t25" WINDOW LAST 3 AGGREGATE COUNT(*) AS c, MAX(sev) AS top
+    expect:
+      success: true
+      values:
+        c: 3
+        top: 7
+
+  - id: T25-12
+    name: "WINDOW on another memory type is an error"
+    query: |
+      RECALL FROM SEMANTIC WHERE w25 = "t25" WINDOW LAST 2
+    expect:
+      success: false
+      error_contains: "WINDOW is only valid"
+
+  - id: T25-13
+    name: "WINDOW on LOOKUP is an error"
+    query: |
+      LOOKUP FROM EPISODIC KEY id = "x" WINDOW LAST 2
+    expect:
+      success: false
+      error_contains: "WINDOW is only valid"

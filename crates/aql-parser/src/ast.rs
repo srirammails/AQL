@@ -32,6 +32,8 @@ pub enum Statement {
     UpdateLink(UpdateLinkStmt),
     /// UNLINK FROM ... TO ... [TYPE "t"]  (v0.7)
     Unlink(UnlinkStmt),
+    /// MERGE ENTITY "dup" INTO "survivor"  (v0.10)
+    Merge(MergeStmt),
     /// SUBSCRIBE SCOPE|TOPIC "..." [KINDS ...] [WHERE ...] [FROM NOW|OFFSET n] (v0.6)
     Subscribe(SubscribeStmt),
     /// UNSUBSCRIBE <id> (v0.6)
@@ -234,10 +236,21 @@ pub struct LoadStmt {
 pub struct StoreStmt {
     /// Memory type to store into
     pub memory_type: MemoryType,
+    /// v0.8: `STORE INTO SEMANTIC FACT [MULTI]` — the payload is a fact
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fact: Option<FactMode>,
     /// Payload (field assignments)
     pub payload: Vec<FieldAssignment>,
     /// Modifiers
     pub modifiers: Modifiers,
+}
+
+/// v0.8 `FACT [MULTI]`: one current fact per (subject, predicate), or with `MULTI`
+/// one per (subject, predicate, object).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FactMode {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub multi: bool,
 }
 
 /// UPDATE statement
@@ -309,6 +322,14 @@ pub struct UnlinkStmt {
     pub link_type: Option<String>,
 }
 
+/// MERGE statement (v0.10): SEMANTIC entity `from` merges into `into`: its facts
+/// and links move to `into`, it is forgotten, and its key becomes an alias of `into`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MergeStmt {
+    pub from: String,
+    pub into: String,
+}
+
 /// Query predicate
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -319,10 +340,13 @@ pub enum Predicate {
     Key { field: String, value: Value },
     /// LIKE $embedding_var
     Like { variable: String },
-    /// PATTERN $pattern_var THRESHOLD 0.7
+    /// PATTERN $pattern_var THRESHOLD 0.7, or PATTERN "text" (v0.7: the spec's
+    /// `"PATTERN" expression`). For a literal, `text` holds it and `variable` repeats it.
     Pattern {
         variable: String,
         threshold: Option<f32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
     },
     /// ALL (match everything)
     All,
@@ -534,6 +558,9 @@ pub struct Modifiers {
     /// AGGREGATE functions
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aggregate: Option<Vec<AggregateFunc>>,
+    /// GROUP BY fields (v0.9): with AGGREGATE, one result row per group
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_by: Option<Vec<String>>,
     /// HAVING conditions
     #[serde(skip_serializing_if = "Option::is_none")]
     pub having: Option<Vec<Condition>>,
@@ -549,6 +576,27 @@ pub struct Modifiers {
     /// IN SCOPE "agent:42" — named scope (v0.6)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub in_scope: Option<String>,
+    /// AS OF t (v0.10): the records as they were at t
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_of: Option<TimePoint>,
+    /// VALID AT t (v0.10): facts that held at t, as known now
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_at: Option<TimePoint>,
+    /// WITH HISTORY (v0.10): every version, current and replaced
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub with_history: bool,
+}
+
+/// A point in time (v0.10): a date or RFC 3339 string, a variable, or a duration ago.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TimePoint {
+    /// "2026-10-01" or "2026-10-01T12:00:00Z"
+    At { time: String },
+    /// $t, bound by the caller or an earlier pipeline stage
+    Variable { name: String },
+    /// 7d AGO
+    Ago { duration: Duration },
 }
 
 /// ORDER BY specification
@@ -609,18 +657,67 @@ impl AggregateFuncType {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WithLinks {
     /// Include all links
-    All,
+    All {
+        /// v0.8: which way the links point
+        #[serde(default, skip_serializing_if = "LinkDirection::is_outbound")]
+        direction: LinkDirection,
+        /// v0.8: only links at least this heavy
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min_weight: Option<f64>,
+    },
     /// Include links of specific type
-    Type { link_type: String },
+    Type {
+        link_type: String,
+        #[serde(default, skip_serializing_if = "LinkDirection::is_outbound")]
+        direction: LinkDirection,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min_weight: Option<f64>,
+    },
+    /// v0.8: include links of any of these types (`TYPE IN (...)`)
+    Types {
+        link_types: Vec<String>,
+        #[serde(default, skip_serializing_if = "LinkDirection::is_outbound")]
+        direction: LinkDirection,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min_weight: Option<f64>,
+    },
 }
 
 /// FOLLOW LINKS modifier
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FollowLinks {
-    /// Link type to follow
-    pub link_type: String,
+    /// Link type to follow (`None`: every type, or the types in `link_types`)
+    pub link_type: Option<String>,
+    /// v0.8: `TYPE IN (...)`
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub link_types: Vec<String>,
+    /// v0.8: which way the links point
+    #[serde(default, skip_serializing_if = "LinkDirection::is_outbound")]
+    pub direction: LinkDirection,
+    /// v0.8: only links at least this heavy
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_weight: Option<f64>,
     /// Maximum depth
     pub depth: Option<u32>,
+}
+
+/// Which way the links a WITH / FOLLOW LINKS reads point (v0.8).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkDirection {
+    /// Links leaving the record (the only kind before v0.8)
+    #[default]
+    Outbound,
+    /// Links pointing at the record
+    Inbound,
+    /// Both
+    Both,
+}
+
+impl LinkDirection {
+    pub fn is_outbound(&self) -> bool {
+        *self == Self::Outbound
+    }
 }
 
 /// Window specification
