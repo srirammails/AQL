@@ -777,6 +777,10 @@ fn parse_modifier_into(
                 parse_string_literal(inner.into_inner().next().ok_or(ParseError::Empty)?)?;
             mods.namespace = Some(ns);
         }
+        Rule::branch_mod => {
+            let b = parse_string_literal(inner.into_inner().next().ok_or(ParseError::Empty)?)?;
+            mods.branch = Some(b);
+        }
         Rule::ttl_mod => {
             mods.ttl = Some(parse_duration_from_mod(inner)?);
         }
@@ -1688,6 +1692,22 @@ mod tests {
         };
         assert_eq!(r.modifiers.scope, Some(Scope::Shared));
         assert!(r.modifiers.in_scope.is_none());
+    }
+
+    #[test]
+    fn test_v011_branch_modifier() {
+        let Statement::Recall(r) = parse(r#"RECALL FROM SEMANTIC WHERE subject = "acme" NAMESPACE "crm" BRANCH "try-new-recall" LIMIT 5"#).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(r.modifiers.branch.as_deref(), Some("try-new-recall"));
+        assert_eq!(r.modifiers.namespace.as_deref(), Some("crm"));
+        let Statement::Store(s) = parse(r#"STORE INTO EPISODIC (event = "x") BRANCH "b1""#).unwrap() else {
+            panic!()
+        };
+        assert_eq!(s.modifiers.branch.as_deref(), Some("b1"));
+        let Statement::Recall(r) = parse(r#"RECALL FROM SEMANTIC ALL"#).unwrap() else { panic!() };
+        assert!(r.modifiers.branch.is_none(), "no BRANCH: main");
     }
 
     #[test]

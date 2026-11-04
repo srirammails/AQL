@@ -284,6 +284,7 @@ modifier = {
   | min_confidence_mod
   | scope_mod
   | namespace_mod
+  | branch_mod
   | ttl_mod
   | aggregate_mod
   | group_by_mod
@@ -320,6 +321,10 @@ scope_mod = { ^"SCOPE" ~ scope_value }
 scope_value = { ^"private" | ^"shared" | ^"cluster" }
 
 namespace_mod = { ^"NAMESPACE" ~ string_literal }
+
+// v0.11: a memory branch (agents as repos). Reads see the parent as of the branch
+// point plus the branch's own writes; writes land on the branch only.
+branch_mod = { ^"BRANCH" ~ string_literal }
 
 ttl_mod = { ^"TTL" ~ duration_literal }
 

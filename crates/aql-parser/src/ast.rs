@@ -552,6 +552,9 @@ pub struct Modifiers {
     /// NAMESPACE "name"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
+    /// BRANCH "name" (v0.11): the memory branch the statement reads and writes
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
     /// TTL duration
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttl: Option<Duration>,
