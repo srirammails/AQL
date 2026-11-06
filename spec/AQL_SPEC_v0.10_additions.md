@@ -71,8 +71,8 @@ RECALL FROM SEMANTIC WHERE subject = $who AS OF $then
 | `VALID AT v` | The facts that hold at v, as memory knows them now (or at `AS OF`, if given). |
 | `WITH HISTORY` | Every version recorded (by `AS OF`, if given), current and replaced, whatever its validity; with `VALID AT`, those holding at v. |
 
-- On `RECALL` and `LOOKUP` over **SEMANTIC and PROCEDURAL**, the memory types that
-  keep versions. `VALID AT` only on SEMANTIC. Anything else is an error.
+- On `RECALL` and `LOOKUP` over every memory type but **WORKING**, which keeps no versions
+  (EPISODIC and TOOLS since ADB DB-8). `VALID AT` only on SEMANTIC. Anything else is an error.
 - A time point is a string as in §1, a variable bound to one, or `<duration> AGO`.
 - Each record carries `_recorded_at` (when its version was written) and
   `_replaced_at` (when a newer version replaced it, as of `AS OF`; else `null`), next
@@ -149,9 +149,8 @@ The payload keeps the bare key (`key`, a fact's `subject` / `object`).
 AS OF, VALID AT and WITH HISTORY only on RECALL and LOOKUP:
   SCAN FROM WORKING WITH HISTORY → error: "AS OF, VALID AT and WITH HISTORY are only
   valid on RECALL and LOOKUP"
-On SEMANTIC and PROCEDURAL only:
-  RECALL FROM EPISODIC … AS OF 1d AGO → error: "AS OF and WITH HISTORY are only valid
-  on SEMANTIC and PROCEDURAL"
+Not on WORKING:
+  RECALL FROM WORKING … AS OF 1d AGO → error: "AS OF and WITH HISTORY aren't valid on WORKING"
 VALID AT on SEMANTIC only:
   RECALL FROM PROCEDURAL … VALID AT "2026-01-01" → error: "VALID AT is only valid on
   SEMANTIC"

@@ -131,12 +131,12 @@ tests:
       error_contains: "valid_to"
 
   - id: T27-16
-    name: "history reads only on SEMANTIC and PROCEDURAL"
+    name: "no history reads on WORKING"
     query: |
-      RECALL FROM EPISODIC WHERE a = 1 AS OF 1h AGO
+      RECALL FROM WORKING WHERE a = 1 AS OF 1h AGO
     expect:
       success: false
-      error_contains: "only valid on SEMANTIC and PROCEDURAL"
+      error_contains: "aren't valid on WORKING"
 
   - id: T27-17
     name: "VALID AT only on SEMANTIC"

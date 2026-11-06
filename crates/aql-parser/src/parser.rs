@@ -86,8 +86,8 @@ fn check_time(stmt: &Statement, mods: &Modifiers) -> ParseResult<()> {
     if mods.valid_at.is_some() && memory != MemoryType::Semantic {
         return Err(ParseError::Validation("VALID AT is only valid on SEMANTIC".into()));
     }
-    if !matches!(memory, MemoryType::Semantic | MemoryType::Procedural) {
-        return Err(ParseError::Validation("AS OF and WITH HISTORY are only valid on SEMANTIC and PROCEDURAL".into()));
+    if matches!(memory, MemoryType::Working) {
+        return Err(ParseError::Validation("AS OF and WITH HISTORY aren't valid on WORKING".into()));
     }
     Ok(())
 }
