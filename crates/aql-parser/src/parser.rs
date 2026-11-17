@@ -196,7 +196,7 @@ fn link(pair: P) -> ParseResult<LinkStmt> {
             Rule::link_ends => (l.from_type, l.from_conditions, l.to_type, l.to_conditions) = ends(item)?,
             Rule::string_literal => l.link_type = string(item)?,
             Rule::number => l.weight = Some(number(item)? as f32),
-            Rule::namespace_mod => l.namespace = Some(string(first(item)?)?),
+            Rule::namespace_mod => l.namespace = Some(one_namespace(item)?),
             _ => {}
         }
     }
@@ -216,7 +216,7 @@ fn unlink(pair: P) -> ParseResult<UnlinkStmt> {
         match item.as_rule() {
             Rule::link_ends => (u.from_type, u.from_conditions, u.to_type, u.to_conditions) = ends(item)?,
             Rule::string_literal => u.link_type = Some(string(item)?),
-            Rule::namespace_mod => u.namespace = Some(string(first(item)?)?),
+            Rule::namespace_mod => u.namespace = Some(one_namespace(item)?),
             _ => {}
         }
     }
@@ -270,7 +270,7 @@ fn subscribe(pair: P) -> ParseResult<SubscribeStmt> {
                 match item.as_rule() {
                     Rule::topic_target => s.target = SubscribeTarget::Topic(string(first(item)?)?),
                     Rule::where_pred => s.filter = Some(conditions(first(item)?)?),
-                    Rule::namespace_mod => s.namespace = Some(string(first(item)?)?),
+                    Rule::namespace_mod => s.namespace = Some(one_namespace(item)?),
                     _ => {}
                 }
             }
@@ -284,7 +284,7 @@ fn unsubscribe(pair: P) -> ParseResult<UnsubscribeStmt> {
     for item in pair.into_inner() {
         match item.as_rule() {
             Rule::handle => u.subscription = handle(item)?,
-            Rule::namespace_mod => u.namespace = Some(string(first(item)?)?),
+            Rule::namespace_mod => u.namespace = Some(one_namespace(item)?),
             _ => {}
         }
     }
@@ -329,6 +329,11 @@ fn validate(stmt: &Statement) -> ParseResult<()> {
         {
             bad("a link's ends are in one memory type each, not ALL")
         }
+        Statement::Store(StoreStmt { modifiers: m, .. }) | Statement::Update(UpdateStmt { modifiers: m, .. }) | Statement::Forget(ForgetStmt { modifiers: m, .. }) | Statement::Publish(PublishStmt { modifiers: m, .. })
+            if !m.namespaces.is_empty() =>
+        {
+            bad("NAMESPACE (…) lists namespaces to read; a write is in one namespace")
+        }
         Statement::Recall(r) => aggregates(&r.modifiers),
         Statement::Subscribe(SubscribeStmt { target: SubscribeTarget::Query(r), .. }) => aggregates(&r.modifiers),
         Statement::Forget(f) if f.conditions.is_empty() && f.modifiers.namespace.is_none() => {
@@ -355,7 +360,20 @@ fn aggregates(m: &Modifiers) -> ParseResult<()> {
 fn modifier(pair: P, m: &mut Modifiers) -> ParseResult<()> {
     let item = first(pair)?;
     match item.as_rule() {
-        Rule::namespace_mod => m.namespace = Some(string(first(item)?)?),
+        Rule::namespace_mod => {
+            let v = first(item)?;
+            match v.as_rule() {
+                Rule::namespace_list => {
+                    let mut list = v.into_inner().map(string).collect::<ParseResult<Vec<_>>>()?;
+                    list.dedup();
+                    match list.len() {
+                        1 => m.namespace = list.pop(),
+                        _ => m.namespaces = list,
+                    }
+                }
+                _ => m.namespace = Some(string(v)?),
+            }
+        }
         Rule::in_scope_mod => m.in_scope = Some(string(first(item)?)?),
         Rule::limit_mod => m.limit = Some(integer(first(item)?)?.max(0) as usize),
         Rule::order_mod => {
@@ -401,6 +419,15 @@ fn modifier(pair: P, m: &mut Modifiers) -> ParseResult<()> {
         r => return Err(ParseError::UnexpectedRule(format!("{r:?}"))),
     }
     Ok(())
+}
+
+/// A statement-level NAMESPACE (links, topics): one namespace, not a list.
+fn one_namespace(pair: P) -> ParseResult<String> {
+    let v = first(pair)?;
+    match v.as_rule() {
+        Rule::namespace_list => Err(ParseError::Validation("NAMESPACE (…) lists namespaces to read; this statement is in one namespace".into())),
+        _ => string(v),
+    }
 }
 
 fn link_select<'a>(parts: impl Iterator<Item = P<'a>>) -> ParseResult<LinkSelect> {
@@ -715,6 +742,26 @@ mod tests {
         let s = parse_script(r#"USE "crm"; BRANCH FROM "crm" INTO "crm-try""#, None).unwrap();
         assert_eq!(s[0], Statement::Branch(NamespaceStmt { from: "crm".into(), into: "crm-try".into(), as_of: None }));
         assert!(parse("USE crm").is_err(), "a namespace is a string");
+    }
+
+    #[test]
+    fn a_read_may_name_several_namespaces() {
+        let r = recall_of(r#"RECALL FROM SEMANTIC LIKE $q NAMESPACE ("crm", "kb") LIMIT 5"#);
+        assert_eq!((r.modifiers.namespace, r.modifiers.namespaces), (None, vec!["crm".to_string(), "kb".to_string()]));
+        assert_eq!(recall_of(r#"RECALL FROM SEMANTIC NAMESPACE ("crm")"#).modifiers.namespace.as_deref(), Some("crm"), "a list of one is one");
+        // USE doesn't add to a list.
+        let s = parse_script(r#"USE "ops"; RECALL FROM SEMANTIC NAMESPACE ("crm", "kb")"#, None).unwrap();
+        let Statement::Recall(r) = &s[0] else { panic!() };
+        assert_eq!((r.modifiers.namespace.as_ref(), r.modifiers.namespaces.len()), (None, 2));
+        // A write is in one namespace.
+        for q in [
+            r#"STORE INTO EPISODIC (a = 1) NAMESPACE ("a", "b")"#,
+            r#"UPDATE INTO SEMANTIC WHERE key = "k" (a = 1) NAMESPACE ("a", "b")"#,
+            r#"FORGET FROM EPISODIC WHERE a = 1 NAMESPACE ("a", "b")"#,
+            r#"LINK FROM SEMANTIC WHERE key = "a" INTO SEMANTIC WHERE key = "b" TYPE "t" NAMESPACE ("a", "b")"#,
+        ] {
+            assert!(parse(q).unwrap_err().to_string().contains("one namespace"), "{q}");
+        }
     }
 
     #[test]

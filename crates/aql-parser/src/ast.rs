@@ -48,11 +48,17 @@ impl Statement {
                 *slot = Some(ns.to_string());
             }
         }
+        // A read that names a list of namespaces names them all.
+        fn fill_read(m: &mut Modifiers, ns: &str) {
+            if m.namespaces.is_empty() {
+                fill(&mut m.namespace, ns);
+            }
+        }
         match &mut self {
             Statement::Pipeline(p) => {
                 p.stages = std::mem::take(&mut p.stages).into_iter().map(|s| s.with_default_namespace(namespace)).collect();
             }
-            Statement::Recall(r) => fill(&mut r.modifiers.namespace, namespace),
+            Statement::Recall(r) => fill_read(&mut r.modifiers, namespace),
             Statement::Store(s) => fill(&mut s.modifiers.namespace, namespace),
             Statement::Update(u) => fill(&mut u.modifiers.namespace, namespace),
             Statement::Forget(f) => fill(&mut f.modifiers.namespace, namespace),
@@ -60,7 +66,7 @@ impl Statement {
             Statement::Unlink(u) => fill(&mut u.namespace, namespace),
             Statement::Publish(p) => fill(&mut p.modifiers.namespace, namespace),
             Statement::Subscribe(s) => match &mut s.target {
-                SubscribeTarget::Query(r) => fill(&mut r.modifiers.namespace, namespace),
+                SubscribeTarget::Query(r) => fill_read(&mut r.modifiers, namespace),
                 SubscribeTarget::Topic(_) => fill(&mut s.namespace, namespace),
             },
             Statement::Use(_) | Statement::Branch(_) | Statement::Fork(_) | Statement::Merge(_) | Statement::Unsubscribe(_) => {}
@@ -411,8 +417,12 @@ pub struct FieldAssignment {
 /// Modifiers (spec §8).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Modifiers {
+    /// NAMESPACE "ns"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
+    /// NAMESPACE ("a", "b"): a read across these namespaces (two or more; RECALL only).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub namespaces: Vec<String>,
     /// IN SCOPE "team:billing": a shared group within the namespace
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub in_scope: Option<String>,

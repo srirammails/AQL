@@ -20,7 +20,7 @@ equivalent.
 | Conditions (§8) | = != < <= > >=, BETWEEN, IN (…), STARTS_WITH, AND, OR, ( ) | 01, 02, 20, 27, 33 | CONTAINS, ENDS_WITH not tested |
 | Replaced v0.5–v0.12 forms (§9) refused | LOOKUP, LOAD, SCAN, KEY, LINK … TO, PATTERN … THRESHOLD, SCOPE private, WATCH, REFLECT, TYPE IN, INBOUND, MIN_WEIGHT, FACT, WINDOW TOP / SINCE, AS OF … AGO, VALID AT, MERGE ENTITY, BRANCH "b" | 17, 23, 25, 27, 28, 30 | ACK, DEBOUNCE, FROM NOW, KINDS (removed tests, not refusal tests) |
 | Bug regressions | B2–B29 where the statement still exists | see below | B10 (SCOPE modifier removed) |
-| **Overall** | | **393 tests in 33 suites** (246 + 147 server only) | |
+| **Overall** | | **406 tests in 34 suites** (246 + 160 server only) | |
 
 ## Tests per suite
 
@@ -59,7 +59,8 @@ equivalent.
 | 31_namespace_statements | 19 | 7 unchanged, 10 translated, 5 removed, 2 added | yes |
 | 32_merge_namespace | 16 | 10 translated, 3 removed, 6 added | yes |
 | 33_branch_fork_merge | 65 | new | yes |
-| **Total** | **393** | 334 before: 45 removed, 104 added | 147 |
+| 34_use_and_namespaces | 13 | new: USE, scripts, NAMESPACE ("a", "b") | 13 |
+| **Total** | **406** | 334 before: 45 removed, 117 added | 160 |
 
 ## Bug Regression Coverage
 

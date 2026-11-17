@@ -151,7 +151,9 @@ modifier = {
   | with_history_mod
 }
 
-namespace_mod = { ^"NAMESPACE" ~ string_literal }
+// NAMESPACE "crm" | NAMESPACE ("crm", "kb") — a list only on reads
+namespace_mod = { ^"NAMESPACE" ~ (namespace_list | string_literal) }
+namespace_list = { "(" ~ string_literal ~ ("," ~ string_literal)* ~ ")" }
 in_scope_mod = { ^"IN" ~ ^"SCOPE" ~ string_literal }
 limit_mod = { ^"LIMIT" ~ integer_literal }
 order_mod = { ^"ORDER" ~ ^"BY" ~ field_path ~ order_direction? }

@@ -1,0 +1,117 @@
+# AQL v0.13 Test Suite - USE, scripts and reads across namespaces
+# USE "ns" gives the later statements of a script (statements separated by ;) that
+# name no namespace that one; a statement's own NAMESPACE wins; a script's answer is
+# its last statement's, and a failing statement stops it, naming its position. A
+# RECALL may read several namespaces: NAMESPACE ("a", "b"); writes are in one
+# (spec/AQL_SPEC_v0.13.md §0). Tests run in order.
+
+suite: USE_AND_NAMESPACES
+spec_section: "v0.13"
+requires: server
+total_tests: 13
+
+tests:
+  - id: T34-01
+    name: "setup: a record in namespace p"
+    query: |
+      STORE INTO SEMANTIC (key = "t34:a", content = "alpha note") NAMESPACE "t34-p"
+    expect:
+      success: true
+
+  - id: T34-02
+    name: "setup: a record in namespace q"
+    query: |
+      STORE INTO SEMANTIC (key = "t34:b", content = "alpha memo") NAMESPACE "t34-q"
+    expect:
+      success: true
+
+  - id: T34-03
+    name: "USE: the next statement reads p"
+    query: |
+      USE "t34-p"; RECALL FROM SEMANTIC WHERE key = "t34:a"
+    expect:
+      success: true
+      count: 1
+
+  - id: T34-04
+    name: "USE: q's record isn't in p"
+    query: |
+      USE "t34-p"; RECALL FROM SEMANTIC WHERE key = "t34:b"
+    expect:
+      success: true
+      count: 0
+
+  - id: T34-05
+    name: "a statement's own NAMESPACE wins over USE"
+    query: |
+      USE "t34-p"; RECALL FROM SEMANTIC WHERE key = "t34:b" NAMESPACE "t34-q"
+    expect:
+      success: true
+      count: 1
+
+  - id: T34-06
+    name: "USE, then a write and a read in that namespace"
+    query: |
+      USE "t34-q";
+      STORE INTO EPISODIC (key = "t34:e", n = 1);
+      RECALL FROM EPISODIC WHERE key = "t34:e"
+    expect:
+      success: true
+      count: 1
+
+  - id: T34-07
+    name: "the write went to q, not p"
+    query: |
+      RECALL FROM EPISODIC WHERE key = "t34:e" NAMESPACE "t34-p"
+    expect:
+      success: true
+      count: 0
+
+  - id: T34-08
+    name: "a read across two namespaces"
+    query: |
+      RECALL FROM SEMANTIC WHERE key IN ("t34:a", "t34:b") NAMESPACE ("t34-p", "t34-q")
+    expect:
+      success: true
+      count: 2
+
+  - id: T34-09
+    name: "LIKE across two namespaces ranks both"
+    query: |
+      RECALL FROM SEMANTIC LIKE "alpha" NAMESPACE ("t34-p", "t34-q") LIMIT 5
+    expect:
+      success: true
+      count: 2
+
+  - id: T34-10
+    name: "a failing statement stops the script and is named"
+    query: |
+      USE "t34-p";
+      STORE INTO SEMANTIC (key = "t34:c", n = 1);
+      STORE INTO SEMANTIC (key = "t34:c", n = 2)
+    expect:
+      success: false
+      error_contains: "statement 3"
+
+  - id: T34-11
+    name: "the statements before it stay done"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t34:c" NAMESPACE "t34-p"
+    expect:
+      success: true
+      count: 1
+
+  - id: T34-12
+    name: "a write is in one namespace"
+    query: |
+      STORE INTO EPISODIC (a = 1) NAMESPACE ("t34-p", "t34-q")
+    expect:
+      success: false
+      error_contains: "one namespace"
+
+  - id: T34-13
+    name: "USE alone is a statement"
+    query: |
+      USE "t34-p"
+    expect:
+      success: true

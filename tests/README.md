@@ -5,7 +5,7 @@ Language) v0.13, release 0.13.0: the 13-verb language of
 [AQL_SPEC_v0.13.md](../spec/AQL_SPEC_v0.13.md), which replaces v0.5 and the
 v0.6–v0.12 additions.
 
-**393 tests in 33 suites**: 246 that run on any implementation and 147 that need a
+**406 tests in 34 suites**: 246 that run on any implementation and 160 that need a
 server (`requires: server`). The suites were rewritten from the v0.5–v0.12 syntax
 (LOOKUP / LOAD / SCAN → RECALL, LINK … TO → INTO, facts → links and fields,
 MERGE ENTITY → aliases, WATCH → SUBSCRIBE RECALL, REFLECT → PIPELINE, …); each
@@ -56,7 +56,8 @@ tests/
 │   ├── 30_branch.yaml        # pointer: the BRANCH "b" modifier is gone (server only)
 │   ├── 31_namespace_statements.yaml # NAMESPACE on links, topics, live queries (server only)
 │   ├── 32_merge_namespace.yaml      # aliases within a NAMESPACE (server only)
-│   └── 33_branch_fork_merge.yaml    # BRANCH / FORK / MERGE on namespaces (server only)
+│   ├── 33_branch_fork_merge.yaml    # BRANCH / FORK / MERGE on namespaces (server only)
+│   └── 34_use_and_namespaces.yaml   # USE, scripts, NAMESPACE ("a", "b") (server only)
 └── coverage/
     └── coverage_matrix.md    # Grammar production → Test ID mapping
 ```
@@ -153,6 +154,7 @@ server (`node run-tests.mjs --url http://host:port`).
 | 31_namespace_statements | 19 | LINK / UNLINK within a NAMESPACE; a namespace's topics, live queries, UNSUBSCRIBE (server only) |
 | 32_merge_namespace | 16 | Aliases within a NAMESPACE (server only) |
 | 33_branch_fork_merge | 65 | BRANCH [AS OF], FORK [AS OF], MERGE both ways, conflicts, PREFER SOURCE / TARGET, dropping (server only) |
+| 34_use_and_namespaces | 13 | USE in a script, a statement's own NAMESPACE wins, a failing statement stops the script, reads across namespaces (server only) |
 
 ## Implementation Notes
 
@@ -162,7 +164,7 @@ A minimal AQL implementation should pass suites 01-07, 13-17, and 21 (core CRUD 
 
 ### Full Implementation
 
-A full implementation should pass all 393 tests, against a server (`--url`).
+A full implementation should pass all 406 tests, against a server (`--url`).
 
 ### The WASM playground
 
@@ -187,6 +189,6 @@ from v0.12). The earlier v0.5 base and v0.6–v0.12 additions are in
 
 - **Language version**: v0.13
 - **Release**: 0.13.0 (the test suite is versioned with the language)
-- **Total tests**: 393 in 33 suites
+- **Total tests**: 406 in 34 suites
 - **Bug regressions**: B2–B29 kept where the statement still exists (B10, the SCOPE
   private|shared modifier, was removed with it)

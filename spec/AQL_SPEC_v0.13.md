@@ -36,6 +36,22 @@ RECALL FROM EPISODIC WHERE pod = "x" NAMESPACE "ops"    -- its own NAMESPACE win
 - A **session** (a connection that keeps state: MCP, Flight) keeps its USE between
   requests. A request without a session (plain HTTP) uses a script.
 - BRANCH, FORK and MERGE name their namespaces themselves; USE doesn't change them.
+- A script's answer is its last statement's. A statement that fails stops the script;
+  the error names it (`statement 3: …`), and the statements before it stay done.
+
+**One namespace per statement, many per script.** Each statement works in one
+namespace — its own `NAMESPACE`, else the USE in force. A script or a PIPELINE moves
+between namespaces statement by statement:
+
+```sql
+PIPELINE enrich
+  RECALL FROM SEMANTIC WHERE key = {customer} NAMESPACE "crm"
+  | STORE INTO EPISODIC (customer = {customer}, seen = true) NAMESPACE "ops"
+```
+
+**A read across namespaces.** A RECALL (or SUBSCRIBE RECALL) may list several:
+`RECALL FROM SEMANTIC LIKE $q NAMESPACE ("crm", "kb") LIMIT 5` ranks the records of
+both together. Writes, links and topics are in one namespace.
 
 ---
 
@@ -160,7 +176,7 @@ AQL.
 
 | Purpose | Modifiers |
 |---|---|
-| Whose memory | `NAMESPACE "ns"`, `IN SCOPE "s"` |
+| Whose memory | `NAMESPACE "ns"` (reads: `NAMESPACE ("a", "b")`), `IN SCOPE "s"` |
 | Result | `LIMIT n`, `ORDER BY f [ASC\|DESC]`, `RETURN f, …` |
 | Lifetime | `TTL 7d` |
 | Similarity | `CONFIDENCE 0.7` (at least) |
