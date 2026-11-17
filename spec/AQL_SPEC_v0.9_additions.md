@@ -1,3 +1,5 @@
+> **Superseded by [AQL_SPEC_v0.13.md](AQL_SPEC_v0.13.md)** (AQL 0.13.0, 17 Nov 2026): kept as history. v0.13 is not compatible with it; §9 there maps the old forms to the new ones.
+
 # AQL v0.9 — Additions: grouping and spec completion
 
 > **Date:** 30 Oct 2026 · @Sriram · **Status:** released in AQL 0.12.0; §1–§4 implemented in the grammar,

@@ -1,15 +1,17 @@
 # AQL — Agent Query Language
 
-A declarative query language for agent memory systems. AQL enables LLM agents to store, retrieve, link, and learn from their experiences across five memory types.
+The language an agent uses to talk to its memory. AQL v0.13 is small: **13 verbs plus
+`USE`**, each working on every memory type. The agent says what it wants; the engine
+works out how.
 
 ```sql
-RECALL FROM EPISODIC WHERE outcome = "success" ORDER BY confidence DESC LIMIT 5 RETURN *
+RECALL FROM PROCEDURAL LIKE "pod OOMKilled restart" CONFIDENCE 0.7 LIMIT 3
 ```
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Spec](https://img.shields.io/badge/AQL-v0.13-teal.svg)](CHANGELOG.md)
+[![Spec](https://img.shields.io/badge/AQL-v0.13-teal.svg)](spec/AQL_SPEC_v0.13.md)
 [![Release](https://img.shields.io/badge/release-0.13.0-blue.svg)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-334%20conformance-green.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-406%20conformance-green.svg)](tests/)
 
 ---
 
@@ -19,10 +21,11 @@ RECALL FROM EPISODIC WHERE outcome = "success" ORDER BY confidence DESC LIMIT 5 
 
 | Traditional Approach | AQL Approach |
 |---------------------|--------------|
-| Retraining on new data | Write to memory, query later |
-| Hardcoded knowledge | Dynamic ontology via LINK |
-| Context stuffing | Windowed working memory |
-| Manual tool selection | Queryable tool registry |
+| Retraining on new data | Write to memory, recall later |
+| Hardcoded knowledge | Records and links the agent owns (`LINK`) |
+| Context stuffing | Recall by key, by similarity, or the last 30 seconds |
+| Manual tool selection | `RECALL FROM TOOLS` ranks tools for the task |
+| Risky changes to memory | `BRANCH`, try it, `MERGE` |
 
 **Core thesis:** Agent learning is the accumulation of relationships between memory records and tuned execution parameters—both queryable and writable through AQL.
 
@@ -34,10 +37,11 @@ RECALL FROM EPISODIC WHERE outcome = "success" ORDER BY confidence DESC LIMIT 5 
 
 **[Launch AQL Playground](https://srirammails.github.io/AQL/playground/)** — Parse and execute AQL queries instantly in your browser. No installation required.
 
-> Click example queries to execute them, or write your own. All operations run locally via WASM.
-> The playground parses AQL v0.13 and executes the v0.5 core (and v0.7 `UPDATE LINK` /
-> `UNLINK`); what only a server implements (subscriptions, `WATCH`, history reads,
-> `MERGE ENTITY`, `BRANCH`, …) is refused with an error naming its version.
+> Click an example, or write your own. Everything runs locally via WASM.
+> The playground parses AQL v0.13 and runs the core: `RECALL`, `STORE`, `UPDATE`,
+> `FORGET`, `LINK`, `UNLINK` and `PIPELINE` on one in-browser memory. What only a
+> server does (`USE` scripts, namespaces and `BRANCH` / `FORK` / `MERGE`, history
+> reads, `SUBSCRIBE` / `PUBLISH`) is refused with an error that says so.
 
 ### Rust Reference Implementation
 
@@ -60,7 +64,7 @@ let results = db.execute("RECALL FROM EPISODIC WHERE user_id = \"u123\" RETURN *
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                          AQL Query                                   │
-│   RECALL FROM EPISODIC WHERE confidence > 0.8 LIMIT 10 RETURN *     │
+│   RECALL FROM SEMANTIC LIKE $question CONFIDENCE 0.7 LIMIT 5        │
 └──────────────────────────────┬──────────────────────────────────────┘
                                │
                                ▼
@@ -90,79 +94,155 @@ let results = db.execute("RECALL FROM EPISODIC WHERE user_id = \"u123\" RETURN *
 | **SEMANTIC** | Domain knowledge and concepts | "Refund policy requires receipt" |
 | **PROCEDURAL** | Executable patterns with confidence | Steps to process a refund (0.92 confidence) |
 | **TOOLS** | Available capabilities | API endpoints, functions, services |
+| **ALL** | Every type at once (reads and `FORGET`) | `RECALL FROM ALL WHERE url = "example.com"` |
 
-### Operations
+Every statement says whose memory it touches with `NAMESPACE "<ns>"`, or takes it from
+a `USE` in force. `IN SCOPE "<scope>"` narrows to a shared group inside the namespace.
+
+### The 13 verbs (and USE)
+
+```
+Memory      RECALL  STORE  UPDATE  FORGET  LINK  UNLINK
+Namespaces  BRANCH  FORK  MERGE
+Flow        PIPELINE  SUBSCRIBE  UNSUBSCRIBE  PUBLISH
+Session     USE
+```
+
+Reads say `FROM`, writes say `INTO`. `RECALL` is the only read: the engine picks the
+access path from what you ask.
 
 ```sql
--- Read Operations (FROM)
-SCAN FROM WORKING WINDOW LAST 10            -- Recent context
-RECALL FROM EPISODIC WHERE user = "alice"   -- Query experiences
-LOOKUP FROM SEMANTIC KEY concept = "auth"   -- Direct key lookup
-LOAD FROM TOOLS WHERE category = "api"      -- Load tools
+-- Read: one verb, many ways in
+RECALL FROM SEMANTIC WHERE key = "person:ada"                                  -- by key
+RECALL FROM SEMANTIC LIKE $question CONFIDENCE 0.7 LIMIT 5                     -- by similarity
+RECALL FROM EPISODIC WHERE pod = "payments" ORDER BY created_at DESC LIMIT 10  -- filtered
+RECALL FROM TOOLS WHERE task = "bidding" LIMIT 3                               -- tools for a task
+RECALL FROM WORKING WINDOW LAST 30s                                            -- the session, newest first
+RECALL FROM SEMANTIC WHERE key = "org:acme" FOLLOW LINKS TYPE "works_at" DEPTH 2
+RECALL FROM EPISODIC WHERE outcome = "failure" AGGREGATE COUNT(*) AS n GROUP BY pod HAVING n > 5
 
--- Write Operations (INTO)
-STORE INTO EPISODIC (event = "login") TTL 7d
-UPDATE INTO PROCEDURAL WHERE pattern = "checkout" (confidence = 0.95)
+-- Write
+STORE  INTO EPISODIC (event = "login", user = "u123") TTL 7d
+UPDATE INTO SEMANTIC WHERE key = "person:ada" (role = "CTO")         -- the old version stays as history
 FORGET FROM WORKING WHERE stale = true
 
--- Linking (Dynamic Ontology)
-LINK FROM SEMANTIC WHERE concept = "auth"
-     TO PROCEDURAL WHERE pattern = "login_flow"
-     TYPE "implements"
-
--- Traversal
-RECALL FROM SEMANTIC WHERE concept = "payments"
-      FOLLOW LINKS TYPE "implements"
-      RETURN pattern, confidence
-
--- Aggregation
-RECALL FROM EPISODIC WHERE outcome = "success"
-      AGGREGATE COUNT(*) AS total, AVG(confidence) AS avg_conf
-      HAVING avg_conf > 0.8
-      RETURN total, avg_conf
-
--- Pipelines (Time-Bounded)
-PIPELINE rtb_decision TIMEOUT 50ms
-    RECALL FROM SEMANTIC WHERE category = $category FOLLOW LINKS TYPE "triggers" LIMIT 10
-    | RECALL FROM PROCEDURAL WHERE confidence > 0.5 AGGREGATE MAX(confidence) AS best
-
--- Similarity ($q is text or a vector, passed as a variable)
-RECALL FROM SEMANTIC LIKE $q MIN_CONFIDENCE 0.7 LIMIT 5
-
--- Subscriptions and continuous queries (v0.6)
-SUBSCRIBE TOPIC "orders" WHERE status = "paid" FROM NOW
-PUBLISH TOPIC "orders" (order_id = "o-1", status = "paid") TTL 7d
-WATCH RECALL FROM SEMANTIC IN SCOPE "agent:42" WHERE predicate = "owns" DEBOUNCE 100ms
-
--- Facts and history (v0.8, v0.10)
-STORE INTO SEMANTIC FACT (subject = "person:ada", predicate = "works_at", object = "org:acme")
-RECALL FROM SEMANTIC WHERE subject = "person:ada" AS OF 7d AGO
-
--- Memory spaces and branches (v0.11, v0.12)
-RECALL FROM SEMANTIC ALL NAMESPACE "crm" BRANCH "try-new-recall"
-LINK FROM SEMANTIC WHERE key = "a" TO EPISODIC WHERE key = "b" TYPE "rel" NAMESPACE "crm"
+-- Link: relationships are links (LINK on an existing link sets its weight)
+LINK   FROM SEMANTIC WHERE key = "person:ada" INTO SEMANTIC WHERE key = "org:acme" TYPE "works_at" WEIGHT 0.9
+UNLINK FROM SEMANTIC WHERE key = "person:ada" INTO SEMANTIC WHERE key = "org:acme" TYPE "works_at"
 ```
+
+### An agent's memory loop
+
+A script is statements separated by `;`. `USE` names the namespace once; every later
+statement without its own `NAMESPACE` works there. The answer is the last statement's.
+
+```sql
+USE "agent:support-42";
+RECALL FROM SEMANTIC WHERE key = "customer:ada";
+RECALL FROM PROCEDURAL LIKE $question CONFIDENCE 0.7 LIMIT 3;
+STORE INTO EPISODIC (key = "ep:7781", event = "refund_asked", customer = "customer:ada", outcome = "approved") TTL 90d;
+LINK FROM EPISODIC WHERE key = "ep:7781" INTO SEMANTIC WHERE key = "customer:ada" TYPE "about";
+UPDATE INTO PROCEDURAL WHERE name = "refund_flow" (success_count = 13, confidence = 0.93)
+```
+
+A statement's own `NAMESPACE` wins over the `USE`:
+
+```sql
+USE "crm";
+RECALL FROM SEMANTIC WHERE key = "person:ada";
+STORE INTO EPISODIC (event = "called", who = "person:ada");
+RECALL FROM EPISODIC WHERE pod = "payments" NAMESPACE "ops"
+```
+
+### Reading several namespaces
+
+A `RECALL` (or `SUBSCRIBE RECALL`) may list namespaces; the records of all of them
+are ranked together. Writes, links and topics are always in one namespace.
+
+```sql
+RECALL FROM SEMANTIC LIKE $question NAMESPACE ("crm", "kb") LIMIT 5
+```
+
+### Branch, try, merge
+
+A namespace can be branched like code. A branch sees its base plus its own writes;
+nothing is copied. `FORK` makes a full, independent copy.
+
+```sql
+BRANCH FROM "crm" INTO "crm-try";
+UPDATE INTO SEMANTIC WHERE key = "person:ada" (role = "CTO") NAMESPACE "crm-try";
+RECALL FROM SEMANTIC WHERE key = "person:ada" NAMESPACE "crm-try";
+MERGE FROM "crm-try" INTO "crm";
+FORGET FROM ALL NAMESPACE "crm-try"
+```
+
+```sql
+MERGE  FROM "crm-try" INTO "crm" PREFER SOURCE        -- on conflict, the branch wins
+MERGE  FROM "crm" INTO "crm-try"                      -- bring crm's newer changes into the branch
+BRANCH FROM "crm" INTO "crm-before-import" AS OF "2026-11-01T09:00:00Z"
+FORK   FROM "crm" INTO "crm-nov-1" AS OF "2026-11-01T00:00:00Z"
+```
+
+### One thing, two names
+
+When two keys turn out to name the same thing, give the survivor an alias and forget
+the duplicate. Reads and links by the alias reach the survivor; nothing is rewritten.
+
+```sql
+UPDATE INTO SEMANTIC WHERE key = "person:ada" (aliases = ["person:ada-lovelace"]) NAMESPACE "crm"
+FORGET FROM SEMANTIC WHERE key = "person:ada-lovelace" NAMESPACE "crm"
+```
+
+### History
+
+```sql
+RECALL FROM SEMANTIC WHERE key = "person:ada" AS OF "2026-11-01T09:00:00Z"
+RECALL FROM SEMANTIC WHERE key = "person:ada"
+       WITH HISTORY BETWEEN "2026-10-01T00:00:00Z" AND "2026-11-01T00:00:00Z"
+```
+
+### Pipelines
+
+Stages run in order within a time budget; `{name}` uses a value from an earlier stage.
+The last stage may write.
+
+```sql
+PIPELINE bid TIMEOUT 80ms
+  RECALL FROM TOOLS WHERE task = "bidding" LIMIT 3
+  | RECALL FROM SEMANTIC WHERE key = {url}
+  | RECALL FROM EPISODIC WHERE url = {url} ORDER BY created_at DESC LIMIT 10
+  | STORE INTO EPISODIC (url = {url}, decision = "bid")
+```
+
+### Live: topics and live queries
+
+```sql
+PUBLISH   TOPIC "orders" (order_id = "o-1", status = "paid") TTL 7d NAMESPACE "shop"
+SUBSCRIBE TOPIC "orders" WHERE status = "paid" NAMESPACE "shop"
+SUBSCRIBE RECALL FROM SEMANTIC WHERE kind = "customer" ORDER BY updated_at DESC LIMIT 20 NAMESPACE ("crm", "kb")
+UNSUBSCRIBE "sub-7f3a"
+```
+
+`SUBSCRIBE RECALL` is a live query: its result, as it changes.
 
 ---
 
 ## Versions
 
 AQL has one version number: language **v0.N** is released as **0.N.x** (the crates
-here, tagged `v0.N.x`). The current version is **v0.13 (release 0.13.0)**. The base
-specification is [v0.5](spec/AQL_SPEC_v0.5.md); each later version adds to it, and
-every older statement parses as before.
+here, tagged `v0.N.x`). The current version is **v0.13 (release 0.13.0)**, specified
+in one document: [spec/AQL_SPEC_v0.13.md](spec/AQL_SPEC_v0.13.md).
 
-| Version | Adds | Spec |
+v0.13 replaces v0.5 and the v0.6–v0.12 additions with one smaller language. It is
+not compatible with them: statements change form (`LOOKUP` / `LOAD` / `SCAN` are
+`RECALL`, `MERGE ENTITY` is an alias, `WATCH` is `SUBSCRIBE RECALL`, …). The spec's
+§9 maps every old form to the new one.
+
+| Version | What it is | Spec |
 |---|---|---|
-| v0.12 | `NAMESPACE` on `LINK` / `UPDATE LINK` / `UNLINK` and the topic statements | [additions](spec/AQL_SPEC_v0.12_additions.md) |
-| v0.13 | `NAMESPACE` on `MERGE ENTITY` | [additions](spec/AQL_SPEC_v0.13_additions.md) |
-| v0.11 | `BRANCH "<name>"`: memory branches | [additions](spec/AQL_SPEC_v0.11_additions.md) |
-| v0.10 | fact validity, `AS OF` / `VALID AT` / `WITH HISTORY`, `MERGE ENTITY`, keys per scope | [additions](spec/AQL_SPEC_v0.10_additions.md) |
-| v0.9 | `GROUP BY`, `WINDOW` on episodic `RECALL`, `UPDATE field = null` | [additions](spec/AQL_SPEC_v0.9_additions.md) |
-| v0.8 | multi-hop and directed `FOLLOW LINKS`, `MIN_WEIGHT`, `STORE … FACT` | [additions](spec/AQL_SPEC_v0.8_additions.md) |
-| v0.7 | `UPDATE LINK`, `UNLINK` | [additions](spec/AQL_SPEC_v0.7_additions.md) |
-| v0.6 | `SUBSCRIBE` / `PUBLISH` / `ACK`, `WATCH`, `IN SCOPE` | [additions](spec/AQL_SPEC_v0.6_additions.md) |
-| v0.5 | the base: `FROM` / `INTO`, five memory types, links, pipelines, aggregates | [specification](spec/AQL_SPEC_v0.5.md) |
+| v0.13 | One language: 13 verbs + `USE`, `RECALL` the only read, `BRANCH` / `FORK` / `MERGE` on namespaces, aliases, `NAMESPACE (…)` lists on reads | [specification](spec/AQL_SPEC_v0.13.md) |
+| v0.6–v0.12 | Subscriptions, link updates, graph reads, facts, history, memory branches, namespaces on every statement (superseded) | [additions](spec/) |
+| v0.5 | The first base: `FROM` / `INTO`, five memory types, links, pipelines, aggregates (superseded) | [specification](spec/AQL_SPEC_v0.5.md) |
 
 The full history is in [CHANGELOG.md](CHANGELOG.md). In code,
 `aql_parser::LANGUAGE_VERSION` is `"v0.13"` and `aql_parser::VERSION` is `"0.13.0"`.
@@ -181,7 +261,7 @@ repository: `ADB/.ai/ARCHITECTURE.md`.
 ```
 AQL/
 ├── grammar/
-│   └── aql.pest              # PEG grammar (source of truth)
+│   └── aql.pest              # PEG grammar (copy of crates/aql-parser/src/grammar/aql.pest)
 ├── crates/
 │   ├── aql-parser/           # Parser + AST (reusable)
 │   ├── clawdb/               # Reference implementation (LanceDB)
@@ -190,11 +270,11 @@ AQL/
 │   ├── index.html            # Browser playground
 │   └── pkg/                  # WASM bindings
 ├── spec/
-│   ├── AQL_SPEC_v0.5.md      # The base specification
-│   └── AQL_SPEC_v0.6_additions.md … AQL_SPEC_v0.13_additions.md  # Each later version
+│   ├── AQL_SPEC_v0.13.md     # The language (current)
+│   └── AQL_SPEC_v0.2.md … AQL_SPEC_v0.12_additions.md  # Earlier versions (superseded)
 ├── tests/
 │   ├── fixtures/seed.aql     # Canonical test data
-│   ├── suites/*.yaml         # 32 suites, 334 conformance tests
+│   ├── suites/*.yaml         # 34 suites, 406 conformance tests
 │   └── coverage/             # Coverage matrix
 └── CHANGELOG.md              # Versions and releases
 ```
@@ -205,16 +285,18 @@ AQL/
 
 The conformance test suite ensures any AQL implementation matches the specification.
 
+Every suite is written in v0.13. Suites marked `requires: server` need a server (ADB).
+
 ```
 Coverage Summary
-──────────────────────────────────────────
-v0.5 core               116 tests   (suites 01-17, 21)
-v0.6-v0.10 additions    177 tests   (suites 18-20, 22-29)
-v0.11 BRANCH              6 tests   (suite 30)
-v0.12 NAMESPACE          22 tests   (suite 31)
-v0.13 MERGE NAMESPACE    13 tests   (suite 32)
-──────────────────────────────────────────
-Total                   334 tests   (ADB: 334/334)
+──────────────────────────────────────────────────
+Core: read, write, link, pipeline, aggregate  116 tests  (suites 01-17, 21)
+Live queries, links, graph, groups, history   176 tests  (suites 18-20, 22-29)
+Namespaces and aliases                         36 tests  (suites 30-32)
+BRANCH / FORK / MERGE                          65 tests  (suite 33)
+USE, scripts, NAMESPACE lists                  13 tests  (suite 34)
+──────────────────────────────────────────────────
+Total                                         406 tests  in 34 suites
 ```
 
 ### Running Tests
@@ -223,7 +305,7 @@ Tests are YAML files describing queries and expected outcomes:
 
 ```yaml
 - id: T02-01
-  name: "WHERE = string"
+  name: "RECALL WHERE = string"
   query: |
     RECALL FROM EPISODIC WHERE bid_id = "e-001" RETURN bid_id
   expect:
@@ -256,7 +338,7 @@ aql-parser = { git = "https://github.com/srirammails/AQL", tag = "v0.13.0" }
 ```
 
 ```rust
-use aql_parser::{parse, Statement};
+use aql_parser::{parse, parse_script, Statement};
 
 let stmt = parse("RECALL FROM EPISODIC WHERE x = 1 RETURN x")?;
 match stmt {
@@ -265,6 +347,10 @@ match stmt {
     }
     _ => {}
 }
+
+// A script: USE gives the later statements that name no namespace that one.
+// The second argument is a session's namespace in force before the script.
+let stmts = parse_script("USE \"crm\"; RECALL FROM SEMANTIC WHERE key = \"person:ada\"", None)?;
 assert_eq!(aql_parser::LANGUAGE_VERSION, "v0.13");
 ```
 
@@ -325,14 +411,15 @@ wasm-pack build --target web --out-dir ../../playground/pkg
 
 ## Specification
 
-The base specification is `spec/AQL_SPEC_v0.5.md`; versions v0.6 to v0.13 add to it
-(`spec/AQL_SPEC_v0.N_additions.md`, see [Versions](#versions)). Key design principles:
+The language is [`spec/AQL_SPEC_v0.13.md`](spec/AQL_SPEC_v0.13.md); the grammar is
+[`grammar/aql.pest`](grammar/aql.pest). Key design principles:
 
-1. **FROM and INTO express direction explicitly** — Read uses FROM, write uses INTO
-2. **AQL expresses intent, not implementation** — Storage details are backend concerns
-3. **Every statement is scoped to a memory type** — EPISODIC, SEMANTIC, PROCEDURAL, WORKING, TOOLS, or ALL
-4. **Ontology is dynamic and agent-owned** — LINK TYPE is arbitrary, meaning emerges from use
-5. **Pipelines are first-class** — Time-bounded query chains for real-time decisions
+1. **Intent, not implementation** — the agent says what it wants; the engine picks how
+2. **Few verbs, every memory type** — 13 verbs, each on EPISODIC, SEMANTIC, PROCEDURAL, TOOLS, WORKING (and ALL for reads and FORGET)
+3. **FROM and INTO express direction** — reads say FROM, writes say INTO
+4. **Ontology is dynamic and agent-owned** — LINK TYPE is arbitrary; relationships are links, values are fields
+5. **Namespaces are like code** — branch, fork, merge
+6. **Pipelines are first-class** — time-bounded chains for real-time decisions
 
 ---
 
@@ -354,8 +441,8 @@ Apache 2.0 — see [LICENSE](LICENSE)
 
 ## Contributing
 
-1. Read `spec/AQL_SPEC_v0.5.md` and the additions up to the current version
-2. A language change is a new version: a `spec/AQL_SPEC_v0.N_additions.md`, a
+1. Read `spec/AQL_SPEC_v0.13.md`
+2. A language change is a new version: the spec, a
    conformance suite, the grammar in `crates/aql-parser/src/grammar/aql.pest` (copied
    to `grammar/aql.pest`), the workspace version `0.N.0`, `LANGUAGE_VERSION`, and
    `CHANGELOG.md`

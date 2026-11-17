@@ -7,12 +7,13 @@ parses and implements language v0.N. A patch release (0.N.1, …) fixes the pars
 the reference implementation without changing the language. Every release is tagged
 `v0.N.x` in git.
 
-Each version after v0.5 only adds to the language: every older statement parses as
-before, and its AST serializes to the same JSON.
+From v0.6 to v0.12 each version only added to the language: every older statement
+parsed as before. v0.13 is a clean break: one smaller language replaces v0.5 and the
+v0.6–v0.12 additions, and older statements change form (see the 0.13.0 entry).
 
 | Language | Release | Date | Spec | Conformance suites |
 |---|---|---|---|---|
-| v0.13 | 0.13.0 | 17 Nov 2026 | [v0.13 additions](spec/AQL_SPEC_v0.13_additions.md) | `32_merge_namespace` |
+| v0.13 | 0.13.0 | 17 Nov 2026 | [v0.13 specification](spec/AQL_SPEC_v0.13.md) (replaces all below) | all 34 rewritten in v0.13; new `33_branch_fork_merge`, `34_use_and_namespaces` |
 | v0.12 | 0.12.0 | 17 Nov 2026 | [v0.12 additions](spec/AQL_SPEC_v0.12_additions.md) | `31_namespace_statements` |
 | v0.11 | (in 0.12.0) | 4 Nov 2026 | [v0.11 additions](spec/AQL_SPEC_v0.11_additions.md) | `30_branch` |
 | v0.10 | (in 0.12.0) | 30 Oct 2026 | [v0.10 additions](spec/AQL_SPEC_v0.10_additions.md) | `27_time`, `28_merge`, `29_scoped_keys` |
@@ -28,14 +29,42 @@ released, with v0.12, as 0.12.0. Before 0.12.0 the crates were all at 0.1.0.
 
 ## 0.13.0 — 17 Nov 2026
 
-**Language v0.13: `MERGE ENTITY` can name its namespace** — the last statement
-that couldn't.
+**Language v0.13: one small language.** [`spec/AQL_SPEC_v0.13.md`](spec/AQL_SPEC_v0.13.md)
+replaces v0.5 and the v0.6–v0.12 additions. Not compatible with them: statements
+change form, and the spec's §9 maps every old form to the new one.
 
-- `MERGE ENTITY "<dup>" INTO "<survivor>" NAMESPACE "<ns>"`: both entities are the
-  namespace's; the merged key is an alias within that namespace only.
-- The AST carries it as `namespace` on the `Merge` statement; absent when not given.
+- **13 verbs + `USE`**, each on every memory type: `RECALL STORE UPDATE FORGET LINK
+  UNLINK` (memory), `BRANCH FORK MERGE` (namespaces), `PIPELINE SUBSCRIBE UNSUBSCRIBE
+  PUBLISH` (flow), and `USE` (session).
+- **`RECALL` is the only read.** `LOOKUP`, `LOAD` and `SCAN` are gone; the engine
+  picks the access path. `KEY x = v` is `WHERE x = v`; similarity is
+  `LIKE "text" | $var` with `CONFIDENCE` (was `PATTERN … THRESHOLD`, `MIN_CONFIDENCE`).
+- **`BRANCH` / `FORK` / `MERGE` on namespaces.** A branch is a namespace that reads
+  through its base at a point in time (`AS OF`); a fork is a full copy; `MERGE`
+  applies one side's changes to the other, failing on conflicts unless `PREFER
+  SOURCE | TARGET`. Replaces the `BRANCH "b"` modifier. Dropping a branch is
+  `FORGET FROM ALL NAMESPACE "b"`.
+- **Aliases instead of `MERGE ENTITY`.** `UPDATE … (aliases = [...])` then `FORGET`
+  the duplicate; reads and links by the alias reach the survivor.
+- **No facts, no `VALID AT`.** Relationships are `LINK`s, values are fields;
+  `UPDATE` keeps history for `AS OF "<time>"` and `WITH HISTORY [BETWEEN … AND …]`
+  (`AS OF 2d AGO` is gone). `UPDATE LINK` is `LINK` (create or set the weight).
+- **`USE "ns"` and scripts.** Statements separated by `;` form a script; a `USE` gives
+  the later statements that name no namespace that one, and a statement's own
+  `NAMESPACE` wins. A script's answer is its last statement's; a failing statement
+  stops it and is named by position. In code: `aql_parser::parse_script`.
+- **`NAMESPACE ("a", "b")`** on `RECALL` and `SUBSCRIBE RECALL`: one read across
+  several namespaces. Writes, links and topics are in one namespace.
+- **Keyword cuts** (about 60 keywords left): `LINK … TO` is `LINK … INTO`; `MIN_WEIGHT`
+  is `WEIGHT` (a minimum), links are read in both directions (`OUTBOUND / INBOUND /
+  BOTH` gone), `TYPE IN (…)` is `TYPE ("a", "b")`; `WINDOW TOP n BY f` is
+  `ORDER BY f LIMIT n`; `WATCH` / `UNWATCH` are `SUBSCRIBE RECALL` / `UNSUBSCRIBE`;
+  `REFLECT … THEN` is a `PIPELINE` with a write last; `ACK`, `DEBOUNCE`, `FROM NOW`,
+  `FROM OFFSET`, `KINDS` and `SCOPE private|shared|cluster` are gone (server API and
+  settings, or `NAMESPACE` / `IN SCOPE`); `TIMEOUT` is on `PIPELINE` only.
 
-**Conformance.** 32 suites, 334 tests (suite `32_merge_namespace`, server only).
+**Conformance.** 34 suites, 406 tests, all written in v0.13; new suites
+`33_branch_fork_merge` and `34_use_and_namespaces` (server only).
 
 ## 0.12.0 — 17 Nov 2026
 
