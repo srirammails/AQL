@@ -1,9 +1,10 @@
-# AQL 1.0 — draft for review
+# AQL v0.13
 
-> **Status:** draft, 17 Nov 2026, not implemented. Replaces v0.5 and the v0.6–v0.13
-> additions with one language. No compatibility with 0.x: statements change form.
+> **Status:** accepted 17 Nov 2026 (release 0.13.0), being implemented. Replaces v0.5
+> and the v0.6–v0.12 additions with one language. No compatibility with earlier
+> versions: statements change form.
 
-AQL is how an agent talks to its memory. 1.0 keeps it small: **13 verbs**, each
+AQL is how an agent talks to its memory. v0.13 keeps it small: **13 verbs**, each
 working on every memory type; the engine works out *how* from what is asked.
 
 ```
@@ -163,9 +164,9 @@ TTL CONFIDENCE AGGREGATE COUNT SUM AVG MIN MAX AS GROUP HAVING WINDOW LAST WITH 
 FOLLOW DEPTH OF HISTORY BETWEEN TIMEOUT`; `AND OR CONTAINS STARTS_WITH ENDS_WITH true
 false null`.
 
-## 9. What changed from 0.x
+## 9. What changed from v0.12
 
-| 0.x | 1.0 |
+| v0.12 | v0.13 |
 |---|---|
 | LOOKUP, LOAD, SCAN | RECALL (§1) |
 | `KEY x = v`, `ALL` | `WHERE x = v`, no WHERE |
