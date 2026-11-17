@@ -39,7 +39,7 @@ STORE INTO EPISODIC (
   cpm_paid = 3.20,
   ctr = 0.034,
   viewability = 0.91
-) SCOPE private NAMESPACE "pubcontext-bidder"
+) NAMESPACE "pubcontext-bidder"
 
 STORE INTO EPISODIC (
   bid_id = "e-002",
@@ -48,7 +48,7 @@ STORE INTO EPISODIC (
   cpm_paid = 1.10,
   ctr = 0.005,
   viewability = 0.55
-) SCOPE private NAMESPACE "pubcontext-bidder"
+) NAMESPACE "pubcontext-bidder"
 
 STORE INTO EPISODIC (
   bid_id = "e-003",
@@ -56,7 +56,7 @@ STORE INTO EPISODIC (
   won = true,
   cpm_paid = 2.85,
   ctr = 0.021
-) SCOPE shared NAMESPACE "agent-b-ns"
+) NAMESPACE "agent-b-ns"
 
 -- ┌─────────────────────────────────────────────────────────┐
 -- │ SEMANTIC memory (2 records)                             │
@@ -67,14 +67,14 @@ STORE INTO SEMANTIC (
   avg_cpm = 3.40,
   active = true,
   iab_category = "IAB19"
-) SCOPE private
+)
 
 STORE INTO SEMANTIC (
   concept = "finance_news",
   avg_cpm = 4.10,
   active = true,
   iab_category = "IAB13"
-) SCOPE private
+)
 
 -- ┌─────────────────────────────────────────────────────────┐
 -- │ PROCEDURAL memory (1 record) — SAVE RETURNED UUID!      │
@@ -91,7 +91,7 @@ STORE INTO PROCEDURAL (
   success_count = 8,
   failure_count = 2,
   variables = "bid_multiplier=1.18,min_floor=2.00,max_cpm=5.00"
-) SCOPE shared
+)
 
 -- ┌─────────────────────────────────────────────────────────┐
 -- │ TOOLS memory (1 record)                                 │
@@ -106,7 +106,7 @@ STORE INTO TOOLS (
   task = "scoring",
   ad_format = "display",
   description = "Context scoring tool for RTB"
-) SCOPE shared
+)
 
 -- ══════════════════════════════════════════════════════════
 -- SEED DATA SUMMARY

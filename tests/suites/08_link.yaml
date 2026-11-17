@@ -1,39 +1,40 @@
-# AQL v0.5 Test Suite - §08 LINK
+# AQL v0.13 Test Suite - §08 LINK
 # LINK covers cross-type edges, nonexistent source/target errors,
-# and LINK FROM ALL error message.
+# and LINK FROM ALL error message. spec/AQL_SPEC_v0.13.md §3.
+# From v0.5 (§9, §19): LINK … TO … → LINK … INTO … in every test.
 
 suite: LINK
-spec_section: "§9, §19"
+spec_section: "v0.13"
 total_tests: 6
 bug_refs: [B14, B16]
 
 tests:
   - id: T08-01
     name: "LINK SEMANTIC to PROCEDURAL"
-    spec_ref: "§9 LINK SEMANTIC→PROCEDURAL"
+    spec_ref: "v0.13 §3 LINK SEMANTIC→PROCEDURAL"
     seed_required: [semantic-ai, $PROC_ID]
     query: |
-      LINK FROM SEMANTIC WHERE concept = "ai_enterprise_content" TO PROCEDURAL WHERE pattern = "tech_news_premium" TYPE "triggers" WEIGHT 0.88
+      LINK FROM SEMANTIC WHERE concept = "ai_enterprise_content" INTO PROCEDURAL WHERE pattern = "tech_news_premium" TYPE "triggers" WEIGHT 0.88
     expect:
       success: true
       affected_count: 1
 
   - id: T08-02
     name: "LINK PROCEDURAL to EPISODIC"
-    spec_ref: "§9 LINK PROCEDURAL→EPISODIC"
+    spec_ref: "v0.13 §3 LINK PROCEDURAL→EPISODIC"
     seed_required: [$PROC_ID, e-001]
     query: |
-      LINK FROM PROCEDURAL WHERE pattern = "tech_news_premium" TO EPISODIC WHERE bid_id = "e-001" TYPE "applied_to" WEIGHT 0.95
+      LINK FROM PROCEDURAL WHERE pattern = "tech_news_premium" INTO EPISODIC WHERE bid_id = "e-001" TYPE "applied_to" WEIGHT 0.95
     expect:
       success: true
       affected_count: 1
 
   - id: T08-03
     name: "LINK EPISODIC to EPISODIC same-type"
-    spec_ref: "§9 LINK EPISODIC→EPISODIC same-type"
+    spec_ref: "v0.13 §3 LINK EPISODIC→EPISODIC same-type"
     seed_required: [e-001, e-003]
     query: |
-      LINK FROM EPISODIC WHERE bid_id = "e-001" TO EPISODIC WHERE bid_id = "e-003" TYPE "recurring_pattern" WEIGHT 0.75
+      LINK FROM EPISODIC WHERE bid_id = "e-001" INTO EPISODIC WHERE bid_id = "e-003" TYPE "recurring_pattern" WEIGHT 0.75
     expect:
       success: true
       affected_count: 1
@@ -43,7 +44,7 @@ tests:
     spec_ref: "B16 LINK nonexistent source"
     seed_required: [e-001]
     query: |
-      LINK FROM EPISODIC WHERE bid_id = "ghost-999" TO EPISODIC WHERE bid_id = "e-001" TYPE "phantom" WEIGHT 0.5
+      LINK FROM EPISODIC WHERE bid_id = "ghost-999" INTO EPISODIC WHERE bid_id = "e-001" TYPE "phantom" WEIGHT 0.5
     expect:
       success: false
       error_contains: "source"
@@ -53,7 +54,7 @@ tests:
     spec_ref: "B16 LINK nonexistent target"
     seed_required: [e-001]
     query: |
-      LINK FROM EPISODIC WHERE bid_id = "e-001" TO EPISODIC WHERE bid_id = "ghost-target" TYPE "phantom" WEIGHT 0.5
+      LINK FROM EPISODIC WHERE bid_id = "e-001" INTO EPISODIC WHERE bid_id = "ghost-target" TYPE "phantom" WEIGHT 0.5
     expect:
       success: false
       error_contains: "target"
@@ -63,7 +64,7 @@ tests:
     spec_ref: "B14 LINK FROM ALL error"
     seed_required: []
     query: |
-      LINK FROM ALL WHERE concept = "x" TO PROCEDURAL WHERE pattern = "y" TYPE "t"
+      LINK FROM ALL WHERE concept = "x" INTO PROCEDURAL WHERE pattern = "y" TYPE "t"
     expect:
       success: false
       error_contains: "ALL"

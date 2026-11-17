@@ -1,283 +1,123 @@
 // AQL Grammar - Agent Query Language v0.13 (AQL 0.13.0)
 //
-// AQL encodes agentic intent rather than database mechanics.
-// Core design: AQL expresses what the agent wants. ADB handles how memory works.
+// AQL encodes agentic intent rather than database mechanics: what the agent wants,
+// not how memory works. v0.13 is one small language (spec/AQL_SPEC_v0.13.md):
+// 13 verbs, each on every memory type; the engine works out how.
 //
-// The base is spec/AQL_SPEC_v0.5.md; each later version adds to it
-// (spec/AQL_SPEC_v0.<n>_additions.md):
-// v0.6:  SUBSCRIBE / UNSUBSCRIBE / ACK / PUBLISH / WATCH / UNWATCH, IN SCOPE "<scope>"
-// v0.7:  UPDATE LINK and UNLINK
-// v0.8:  FOLLOW LINKS … DEPTH, direction, MIN_WEIGHT, TYPE IN (…), STORE … FACT
-// v0.9:  GROUP BY, WINDOW on RECALL FROM EPISODIC, UPDATE field = null
-// v0.10: fact validity, AS OF / VALID AT / WITH HISTORY, MERGE ENTITY, keys per scope
-// v0.11: BRANCH "<name>" (memory branches)
-// v0.12: NAMESPACE on LINK / UPDATE LINK / UNLINK (and BRANCH after it) and on the
-//        topic statements
-// v0.13: NAMESPACE on MERGE ENTITY
-
-// ============================================================================
-// Top-level rules
-// ============================================================================
+//   Memory      RECALL  STORE  UPDATE  FORGET  LINK  UNLINK
+//   Namespaces  BRANCH  FORK  MERGE
+//   Flow        PIPELINE  SUBSCRIBE  UNSUBSCRIBE  PUBLISH
 
 aql = { SOI ~ statement ~ EOI }
 
 statement = {
     pipeline_stmt
-  | reflect_stmt
-  | scan_stmt
   | recall_stmt
-  | lookup_stmt
-  | load_stmt
   | store_stmt
-  | update_link_stmt
   | update_stmt
   | forget_stmt
   | link_stmt
   | unlink_stmt
+  | branch_stmt
+  | fork_stmt
   | merge_stmt
   | subscribe_stmt
   | unsubscribe_stmt
-  | ack_stmt
   | publish_stmt
-  | watch_stmt
-  | unwatch_stmt
 }
 
 // ============================================================================
-// PIPELINE - Chained queries with time budget
+// Memory
 // ============================================================================
 
-// PIPELINE bid_decision TIMEOUT 80ms
-//   LOAD FROM TOOLS WHERE task = "bidding"
-//   | LOOKUP FROM SEMANTIC KEY url = {url}
-// Anonymous pipeline also supported:
-//   PIPELINE SCAN FROM WORKING | RECALL FROM EPISODIC WHERE pod = "test"
-pipeline_stmt = {
-    ^"PIPELINE" ~ pipeline_name? ~ timeout_mod ~
-    pipeline_stage ~ ("|" ~ pipeline_stage)*
-}
+// RECALL FROM SEMANTIC WHERE key = "person:ada"
+// RECALL FROM PROCEDURAL LIKE "pod OOMKilled restart" CONFIDENCE 0.7
+// RECALL FROM WORKING WINDOW LAST 30s
+recall_stmt = { ^"RECALL" ~ ^"FROM" ~ memory_type ~ in_scope_mod? ~ predicate? ~ modifier* }
 
-// Pipeline name must not be a reserved keyword
-pipeline_name = { !pipeline_reserved_keyword ~ identifier }
-pipeline_reserved_keyword = { ^"SCAN" | ^"RECALL" | ^"LOOKUP" | ^"LOAD" | ^"REFLECT" | ^"TIMEOUT" }
-
-pipeline_stage = {
-    scan_stmt
-  | recall_stmt
-  | lookup_stmt
-  | load_stmt
-  | reflect_stmt
-}
-
-// ============================================================================
-// REFLECT - Context assembly from multiple sources
-// ============================================================================
-
-// REFLECT FROM EPISODIC WHERE incident_id = {current},
-//          FROM PROCEDURAL WHERE pattern_id = {matched}
-//   WITH LINKS TYPE "applied_to"
-//   THEN STORE INTO PROCEDURAL
-reflect_stmt = {
-    ^"REFLECT" ~ reflect_source ~ ("," ~ reflect_source)* ~
-    with_links_mod? ~ follow_links_mod? ~ then_clause?
-}
-
-reflect_source = {
-    ^"FROM" ~ memory_type ~ predicate?
-}
-
-then_clause = {
-    ^"THEN" ~ (store_stmt | update_stmt)
-}
-
-// ============================================================================
-// Read Operations
-// ============================================================================
-
-// SCAN FROM WORKING WINDOW LAST 10
-scan_stmt = {
-    ^"SCAN" ~ ^"FROM" ~ ^"WORKING" ~ window_mod? ~ modifier*
-}
-
-// RECALL FROM EPISODIC WHERE pod = "payments" MIN_CONFIDENCE 0.7
-// Predicate is optional - allows RECALL FROM EPISODIC ORDER BY field
-// v0.6: optional IN SCOPE "agent:42" after the memory type
-recall_stmt = {
-    ^"RECALL" ~ ^"FROM" ~ memory_type ~ in_scope_mod? ~ predicate? ~ modifier*
-}
-
-// LOOKUP FROM PROCEDURAL PATTERN $log_events THRESHOLD 0.7
-// v0.6: optional IN SCOPE "agent:42" after the memory type
-lookup_stmt = {
-    ^"LOOKUP" ~ ^"FROM" ~ memory_type ~ in_scope_mod? ~ predicate ~ modifier*
-}
-
-// LOAD FROM TOOLS WHERE task = "bidding" ORDER BY ranking DESC LIMIT 3
-load_stmt = {
-    ^"LOAD" ~ ^"FROM" ~ ^"TOOLS" ~ predicate ~ modifier*
-}
-
-// ============================================================================
-// Write Operations
-// ============================================================================
+predicate = { where_pred | like_pred }
+where_pred = { ^"WHERE" ~ condition_list }
+like_pred = { ^"LIKE" ~ (variable | string_literal) }
 
 // STORE INTO EPISODIC (incident_id = "inc-001", pod = "payments") TTL 7d
-// v0.8: STORE INTO SEMANTIC FACT [MULTI] (subject = "person:ada", predicate = "works_at",
-//   object = "org:acme" | value = …, confidence = 0.9, source = "chat:1")
-store_stmt = {
-    ^"STORE" ~ ^"INTO" ~ memory_type ~ fact_mod? ~ payload ~ modifier*
-}
+store_stmt = { ^"STORE" ~ ^"INTO" ~ memory_type ~ payload ~ modifier* }
 
-fact_mod = { ^"FACT" ~ multi_kw? }
-multi_kw = { ^"MULTI" }
+// UPDATE INTO SEMANTIC WHERE key = "person:ada" (age = 36)
+update_stmt = { ^"UPDATE" ~ ^"INTO" ~ memory_type ~ where_pred ~ payload ~ modifier* }
 
-// UPDATE INTO PROCEDURAL WHERE pattern_id = "oom-fix" (confidence = 0.9)
-update_stmt = {
-    ^"UPDATE" ~ ^"INTO" ~ memory_type ~ ^"WHERE" ~ condition_list ~ payload ~ modifier*
-}
+// FORGET FROM WORKING WHERE temp = true;  FORGET FROM ALL NAMESPACE "crm-try"
+forget_stmt = { ^"FORGET" ~ ^"FROM" ~ memory_type ~ where_pred? ~ modifier* }
 
-// FORGET FROM WORKING WHERE temp = "true"
-forget_stmt = {
-    ^"FORGET" ~ ^"FROM" ~ memory_type ~ ^"WHERE" ~ condition_list ~ modifier*
-}
-
-// ============================================================================
-// LINK - Create ontology edges
-// ============================================================================
-
-// LINK FROM PROCEDURAL WHERE pattern_id = "oom-fix"
-//   TO EPISODIC WHERE incident_id = "inc-001"
-//   TYPE "applied_to" WEIGHT 0.95
+// LINK FROM SEMANTIC WHERE key = "person:ada" INTO SEMANTIC WHERE key = "org:acme"
+//   TYPE "works_at" WEIGHT 0.9
+// (create, or set the weight of the link that exists)
 link_stmt = {
-    ^"LINK" ~ ^"FROM" ~ memory_type ~ ^"WHERE" ~ condition_list ~
-    ^"TO" ~ memory_type ~ ^"WHERE" ~ condition_list ~
-    ^"TYPE" ~ string_literal ~ (^"WEIGHT" ~ float_literal)? ~ namespace_mod? ~ branch_mod?
+    ^"LINK" ~ link_ends ~ ^"TYPE" ~ string_literal ~ (^"WEIGHT" ~ number)? ~ namespace_mod?
 }
 
-// v0.7: change existing links in place — their weight, their type, or both. The
-// optional TYPE selects which links between the matched records change.
-// UPDATE LINK FROM PROCEDURAL WHERE pattern_id = "oom-fix"
-//   TO EPISODIC WHERE incident_id = "inc-001" TYPE "applied_to" WEIGHT 0.99
-// UPDATE LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b"
-//   TYPE "related" (type = "depends_on", weight = 0.4)
-update_link_stmt = {
-    ^"UPDATE" ~ ^"LINK" ~ ^"FROM" ~ memory_type ~ ^"WHERE" ~ condition_list ~
-    ^"TO" ~ memory_type ~ ^"WHERE" ~ condition_list ~
-    link_type_filter? ~ (link_weight_set | payload) ~ namespace_mod? ~ branch_mod?
-}
+// UNLINK FROM SEMANTIC WHERE key = "a" INTO SEMANTIC WHERE key = "b" TYPE "related"
+unlink_stmt = { ^"UNLINK" ~ link_ends ~ (^"TYPE" ~ string_literal)? ~ namespace_mod? }
 
-// v0.7: remove links without touching the records at either end.
-// UNLINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" TYPE "related"
-unlink_stmt = {
-    ^"UNLINK" ~ ^"FROM" ~ memory_type ~ ^"WHERE" ~ condition_list ~
-    ^"TO" ~ memory_type ~ ^"WHERE" ~ condition_list ~
-    link_type_filter? ~ namespace_mod? ~ branch_mod?
-}
-
-// v0.10: merge a duplicate entity into another (SEMANTIC); the duplicate's key
-// becomes an alias of the survivor.
-// MERGE ENTITY "person:ada-lovelace" INTO "person:ada"
-merge_stmt = { ^"MERGE" ~ ^"ENTITY" ~ string_literal ~ ^"INTO" ~ string_literal ~ namespace_mod? }
-
-link_type_filter = { ^"TYPE" ~ string_literal }
-link_weight_set = { ^"WEIGHT" ~ float_literal }
+link_ends = { ^"FROM" ~ memory_type ~ where_pred ~ ^"INTO" ~ memory_type ~ where_pred }
 
 // ============================================================================
-// Subscriptions and continuous queries (v0.6)
+// Namespaces
 // ============================================================================
 
-// SUBSCRIBE SCOPE "team:billing" KINDS fact, edge FROM NOW
-// SUBSCRIBE TOPIC "orders.events" WHERE status = "paid" FROM OFFSET 1042
-subscribe_stmt = {
-    ^"SUBSCRIBE" ~ subscribe_target ~ kinds_clause? ~ where_pred? ~ start_clause? ~ namespace_mod?
-}
+// BRANCH FROM "crm" INTO "crm-try" [AS OF "2026-11-01T09:00:00Z"]
+branch_stmt = { ^"BRANCH" ~ ns_from_into ~ as_of_mod? }
+// FORK FROM "crm" INTO "crm-copy" [AS OF …]: a full, independent copy
+fork_stmt = { ^"FORK" ~ ns_from_into ~ as_of_mod? }
+// MERGE FROM "crm-try" INTO "crm" [PREFER SOURCE | PREFER TARGET]
+merge_stmt = { ^"MERGE" ~ ns_from_into ~ prefer_clause? }
 
-subscribe_target = { scope_target | topic_target }
-scope_target = { ^"SCOPE" ~ string_literal }
+ns_from_into = { ^"FROM" ~ string_literal ~ ^"INTO" ~ string_literal }
+prefer_clause = { ^"PREFER" ~ (prefer_source | prefer_target) }
+prefer_source = { ^"SOURCE" }
+prefer_target = { ^"TARGET" }
+
+// ============================================================================
+// Flow
+// ============================================================================
+
+// PIPELINE bid TIMEOUT 80ms RECALL … | RECALL … | STORE …
+pipeline_stmt = { ^"PIPELINE" ~ pipeline_name? ~ timeout_mod? ~ pipeline_stage ~ ("|" ~ pipeline_stage)* }
+pipeline_name = { !reserved ~ identifier }
+reserved = @{ (^"RECALL" | ^"STORE" | ^"UPDATE" | ^"TIMEOUT") ~ !(ASCII_ALPHANUMERIC | "_" | "-") }
+pipeline_stage = { recall_stmt | store_stmt | update_stmt }
+timeout_mod = { ^"TIMEOUT" ~ duration_literal }
+
+// SUBSCRIBE TOPIC "orders" WHERE status = "paid" NAMESPACE "shop"
+// SUBSCRIBE RECALL FROM SEMANTIC WHERE kind = "customer" NAMESPACE "crm"
+subscribe_stmt = { ^"SUBSCRIBE" ~ (topic_sub | recall_stmt) }
+topic_sub = { topic_target ~ where_pred? ~ namespace_mod? }
 topic_target = { ^"TOPIC" ~ string_literal }
-
-// KINDS fact, edge
-kinds_clause = { ^"KINDS" ~ record_kind ~ ("," ~ record_kind)* }
-record_kind = { ^"entity" | ^"fact" | ^"edge" | ^"episode" | ^"tool" | ^"event" }
-
-// FROM NOW | FROM OFFSET 1042
-start_clause = { ^"FROM" ~ (from_now | from_offset) }
-from_now = { ^"NOW" }
-from_offset = { ^"OFFSET" ~ integer_literal }
 
 // UNSUBSCRIBE "sub-7f3a"
 unsubscribe_stmt = { ^"UNSUBSCRIBE" ~ handle ~ namespace_mod? }
-
-// ACK "sub-7f3a" OFFSET 1042
-ack_stmt = { ^"ACK" ~ handle ~ ^"OFFSET" ~ integer_literal ~ namespace_mod? }
-
-// PUBLISH TOPIC "orders.events" (order_id = "o-1", status = "paid") TTL 7d
-publish_stmt = { ^"PUBLISH" ~ topic_target ~ payload ~ modifier* }
-
-// WATCH RECALL FROM SEMANTIC IN SCOPE "agent:42" WHERE predicate = "owns" LIMIT 20
-//       DEBOUNCE 100ms FROM NOW
-watch_stmt = { ^"WATCH" ~ watch_query ~ debounce_clause? ~ start_clause? }
-
-// Statements a continuous query may wrap. Finer limits (the WATCH subset) are
-// enforced by the planner's classifier, not the grammar.
-watch_query = { recall_stmt | lookup_stmt | scan_stmt | load_stmt }
-
-debounce_clause = { ^"DEBOUNCE" ~ duration_literal }
-
-// UNWATCH "cq-91"
-unwatch_stmt = { ^"UNWATCH" ~ handle }
-
-// A subscription or continuous-query id
 handle = { string_literal | variable | identifier }
 
-// ============================================================================
-// Predicates
-// ============================================================================
-
-predicate = {
-    where_pred
-  | key_pred
-  | like_pred
-  | pattern_pred
-  | all_pred
-}
-
-where_pred = { ^"WHERE" ~ condition_list }
-key_pred = { ^"KEY" ~ identifier ~ "=" ~ value }
-like_pred = { ^"LIKE" ~ variable }
-pattern_pred = { ^"PATTERN" ~ (variable | string_literal) ~ (^"THRESHOLD" ~ float_literal)? }
-all_pred = { ^"ALL" }
+// PUBLISH TOPIC "orders" (order_id = "o-1", status = "paid") TTL 7d NAMESPACE "shop"
+publish_stmt = { ^"PUBLISH" ~ topic_target ~ payload ~ modifier* }
 
 // ============================================================================
-// Conditions
+// Conditions and payloads
 // ============================================================================
 
-// Top-level condition list: atoms joined by AND/OR
 condition_list = { condition_atom ~ (logical_op ~ condition_atom)* }
-
-// A condition atom is either a parenthesized group or a simple condition
 condition_atom = { paren_condition | simple_condition }
-
-// Parenthesized condition group - allows (A OR B) syntax
 paren_condition = { "(" ~ condition_list ~ ")" }
-
-// Simple condition: field op value
-simple_condition = { field_path ~ operator ~ value }
-
-// Logical operators for combining conditions
+simple_condition = { field_path ~ (between_op | in_op | (operator ~ value)) }
+between_op = { ^"BETWEEN" ~ value ~ ^"AND" ~ value }
+in_op = { ^"IN" ~ (value_list | array_literal | variable) }
+value_list = { "(" ~ value ~ ("," ~ value)* ~ ")" }
 logical_op = { ^"AND" | ^"OR" }
-
 operator = {
     ">=" | "<=" | "!=" | "<>" | "=" | ">" | "<"
-  | ^"CONTAINS" | ^"STARTS_WITH" | ^"ENDS_WITH" | ^"IN"
+  | ^"CONTAINS" | ^"STARTS_WITH" | ^"ENDS_WITH"
 }
 
-// ============================================================================
-// Payload (for STORE/UPDATE)
-// ============================================================================
-
 payload = { "(" ~ field_assignment ~ ("," ~ field_assignment)* ~ ")" }
-
 field_assignment = { field_path ~ "=" ~ value }
 
 // ============================================================================
@@ -285,167 +125,80 @@ field_assignment = { field_path ~ "=" ~ value }
 // ============================================================================
 
 modifier = {
-    limit_mod
+    namespace_mod
+  | in_scope_mod
+  | limit_mod
   | order_mod
   | return_mod
-  | timeout_mod
-  | min_confidence_mod
-  | scope_mod
-  | namespace_mod
-  | branch_mod
   | ttl_mod
+  | confidence_mod
   | aggregate_mod
   | group_by_mod
   | having_mod
+  | window_mod
   | with_links_mod
   | follow_links_mod
-  | window_mod
-  | in_scope_mod
   | as_of_mod
-  | valid_at_mod
   | with_history_mod
 }
 
-// v0.6: named scope, e.g. STORE INTO SEMANTIC (...) IN SCOPE "team:billing".
-// Distinct from the v0.5 SCOPE private|shared|cluster modifier.
-in_scope_mod = { ^"IN" ~ ^"SCOPE" ~ string_literal }
-
-limit_mod = { ^"LIMIT" ~ integer_literal }
-
-order_mod = { ^"ORDER" ~ ^"BY" ~ field_path ~ order_direction? }
-
-order_direction = { ^"ASC" | ^"DESC" }
-
-return_mod = { ^"RETURN" ~ return_field ~ ("," ~ return_field)* }
-
-return_field = { "*" | field_path }
-
-timeout_mod = { ^"TIMEOUT" ~ duration_literal }
-
-min_confidence_mod = { ^"MIN_CONFIDENCE" ~ float_literal }
-
-scope_mod = { ^"SCOPE" ~ scope_value }
-
-scope_value = { ^"private" | ^"shared" | ^"cluster" }
-
 namespace_mod = { ^"NAMESPACE" ~ string_literal }
-
-// v0.11: a memory branch (agents as repos). Reads see the parent as of the branch
-// point plus the branch's own writes; writes land on the branch only.
-branch_mod = { ^"BRANCH" ~ string_literal }
-
+in_scope_mod = { ^"IN" ~ ^"SCOPE" ~ string_literal }
+limit_mod = { ^"LIMIT" ~ integer_literal }
+order_mod = { ^"ORDER" ~ ^"BY" ~ field_path ~ order_direction? }
+order_direction = { ^"ASC" | ^"DESC" }
+return_mod = { ^"RETURN" ~ return_field ~ ("," ~ return_field)* }
+return_field = { "*" | field_path }
 ttl_mod = { ^"TTL" ~ duration_literal }
+// At least this similar (LIKE).
+confidence_mod = { ^"CONFIDENCE" ~ number }
 
 // AGGREGATE COUNT(*) AS uses, AVG(ctr) AS avg_ctr
 aggregate_mod = { ^"AGGREGATE" ~ agg_func ~ ("," ~ agg_func)* }
-
-agg_func = {
-    agg_func_name ~ "(" ~ (field_path | "*") ~ ")" ~ agg_alias?
-}
-
-// `AS OF` after an aggregate is the time modifier, not an alias named OF.
+agg_func = { agg_func_name ~ "(" ~ (field_path | "*") ~ ")" ~ agg_alias? }
 agg_alias = { ^"AS" ~ !of_kw ~ identifier }
 of_kw = @{ ^"OF" ~ !(ASCII_ALPHANUMERIC | "_" | "-") }
-
 agg_func_name = { ^"COUNT" | ^"AVG" | ^"SUM" | ^"MIN" | ^"MAX" }
-
-// v0.9: GROUP BY url, region (with AGGREGATE: one result row per group)
 group_by_mod = { ^"GROUP" ~ ^"BY" ~ field_path ~ ("," ~ field_path)* }
-
-// HAVING uses > 10 AND avg_ctr < 0.01
 having_mod = { ^"HAVING" ~ condition_list }
 
-// WITH LINKS ALL | WITH LINKS TYPE "applied_to"
-// v0.8: TYPE IN ("a", "b"), INBOUND / BOTH, MIN_WEIGHT 0.5
-with_links_mod = { ^"WITH" ~ ^"LINKS" ~ link_select ~ link_direction? ~ min_weight_mod? }
+// WINDOW LAST 10 | WINDOW LAST 30s
+window_mod = { ^"WINDOW" ~ ^"LAST" ~ (duration_literal | integer_literal) }
 
-// FOLLOW LINKS TYPE "triggers"
-// v0.8: FOLLOW LINKS [ALL | TYPE "t" | TYPE IN (...)] [OUTBOUND | INBOUND | BOTH]
-//   [MIN_WEIGHT w] [DEPTH n]; no type = every type
-follow_links_mod = {
-    ^"FOLLOW" ~ ^"LINKS" ~ link_select? ~ link_direction? ~ min_weight_mod? ~ (^"DEPTH" ~ integer_literal)?
-}
+// WITH LINKS [TYPE "t" | TYPE ("a", "b")] [WEIGHT 0.5]  (both directions; a minimum)
+with_links_mod = { ^"WITH" ~ ^"LINKS" ~ link_types? ~ weight_min? }
+// FOLLOW LINKS [TYPE …] [WEIGHT …] [DEPTH n]
+follow_links_mod = { ^"FOLLOW" ~ ^"LINKS" ~ link_types? ~ weight_min? ~ (^"DEPTH" ~ integer_literal)? }
+link_types = { ^"TYPE" ~ (("(" ~ string_literal ~ ("," ~ string_literal)* ~ ")") | string_literal) }
+weight_min = { ^"WEIGHT" ~ number }
 
-link_select = { link_types_all | link_types_in | link_type_one }
-link_types_all = { ^"ALL" }
-link_types_in = { ^"TYPE" ~ ^"IN" ~ "(" ~ string_literal ~ ("," ~ string_literal)* ~ ")" }
-link_type_one = { ^"TYPE" ~ string_literal }
-link_direction = { ^"OUTBOUND" | ^"INBOUND" | ^"BOTH" }
-min_weight_mod = { ^"MIN_WEIGHT" ~ (float_literal | integer_literal) }
-
-// WINDOW LAST 10 | WINDOW LAST 30s | WINDOW TOP 3 BY attention_weight | WINDOW SINCE event_id = "inc-001"
-window_mod = {
-    ^"WINDOW" ~ (
-        (^"LAST" ~ (duration_literal | integer_literal))
-      | (^"TOP" ~ integer_literal ~ ^"BY" ~ field_path)
-      | (^"SINCE" ~ simple_condition)
-    )
-}
-
-// v0.10: AS OF "2026-10-01" | AS OF $t | AS OF 7d AGO — the memory as it was then
+// AS OF "2026-11-01T09:00:00Z" | AS OF $t
 as_of_mod = { ^"AS" ~ ^"OF" ~ time_point }
-
-// v0.10: VALID AT "1835-01-01" — facts that held then, as known now
-valid_at_mod = { ^"VALID" ~ ^"AT" ~ time_point }
-
-// v0.10: WITH HISTORY — every version, current and replaced
-with_history_mod = { ^"WITH" ~ ^"HISTORY" }
-
-time_point = { time_ago | string_literal | variable }
-time_ago = { duration_literal ~ ^"AGO" }
+// WITH HISTORY [BETWEEN t1 AND t2]
+with_history_mod = { ^"WITH" ~ ^"HISTORY" ~ (^"BETWEEN" ~ time_point ~ ^"AND" ~ time_point)? }
+time_point = { string_literal | variable }
 
 // ============================================================================
-// Memory Types
+// Primitives
 // ============================================================================
 
-memory_type = {
-    ^"WORKING" | ^"TOOLS" | ^"PROCEDURAL" | ^"SEMANTIC" | ^"EPISODIC" | ^"ALL"
-}
+memory_type = { ^"WORKING" | ^"TOOLS" | ^"PROCEDURAL" | ^"SEMANTIC" | ^"EPISODIC" | ^"ALL" }
 
-// ============================================================================
-// Values
-// ============================================================================
+value = { null_literal | bool_literal | float_literal | integer_literal | string_literal | variable | array_literal }
+number = { float_literal | integer_literal }
 
-value = {
-    null_literal
-  | bool_literal
-  | float_literal
-  | integer_literal
-  | string_literal
-  | variable
-  | array_literal
-}
-
-null_literal = { ^"null" | ^"NULL" }
-bool_literal = { ^"true" | ^"false" | ^"TRUE" | ^"FALSE" }
-
+null_literal = { ^"null" }
+bool_literal = { ^"true" | ^"false" }
 integer_literal = @{ "-"? ~ ASCII_DIGIT+ }
-
 float_literal = @{ "-"? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
-
 string_literal = @{ "\"" ~ string_inner ~ "\"" }
 string_inner = @{ (!("\"" | "\\") ~ ANY | "\\" ~ ANY)* }
-
 variable = @{ "{" ~ identifier ~ "}" | "$" ~ identifier }
-
 array_literal = { "[" ~ (value ~ ("," ~ value)*)? ~ "]" }
-
 duration_literal = @{ ASCII_DIGIT+ ~ duration_unit }
 duration_unit = { "ms" | "s" | "m" | "h" | "d" }
-
-// ============================================================================
-// Identifiers and Field Paths
-// ============================================================================
-
-// Simple identifier (no dots)
 identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_" | "-")* }
-
-// Dotted field path for accessing nested fields (e.g., metadata.pod)
 field_path = @{ identifier ~ ("." ~ identifier)* }
-
-// ============================================================================
-// Whitespace and Comments
-// ============================================================================
 
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 COMMENT = _{ "--" ~ (!"\n" ~ ANY)* }

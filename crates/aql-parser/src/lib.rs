@@ -8,7 +8,7 @@
 //! ```
 //! use aql_parser::parse;
 //!
-//! let stmt = parse("SCAN FROM WORKING WINDOW LAST 10").unwrap();
+//! let stmt = parse("RECALL FROM WORKING WINDOW LAST 10").unwrap();
 //! println!("{:?}", stmt);
 //! ```
 
@@ -25,8 +25,7 @@ pub use parser::parse;
 /// ([`LANGUAGE_VERSION`]). See `CHANGELOG.md`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// The AQL language version this parser implements (`spec/AQL_SPEC_v0.5.md` and the
-/// additions up to this version).
+/// The AQL language version this parser implements (`spec/AQL_SPEC_v0.13.md`).
 pub const LANGUAGE_VERSION: &str = "v0.13";
 
 /// The AQL grammar (pest), for tools and LLM clients that need the language definition.

@@ -1,21 +1,22 @@
-# AQL v0.5 Test Suite - §09 WITH LINKS
-# WITH LINKS ALL and TYPE filter verify the links[] payload
-# is present in responses.
+# AQL v0.13 Test Suite - §09 WITH LINKS
+# WITH LINKS (every type) and the TYPE filter verify the links[] payload is
+# present in responses. spec/AQL_SPEC_v0.13.md §8 (links are read in both
+# directions). From v0.5 (§10): LOOKUP → RECALL; WITH LINKS ALL → WITH LINKS.
 
 suite: WITH_LINKS
-spec_section: "§10"
+spec_section: "v0.13"
 total_tests: 2
 bug_refs: [B7]
 depends_on: [T08-01, T08-02]
 
 tests:
   - id: T09-01
-    name: "WITH LINKS ALL (B7)"
+    name: "WITH LINKS, every type (B7)"
     spec_ref: "B7 WITH LINKS ALL"
     seed_required: [$PROC_ID]
     # After T08-02 has created a link
     query: |
-      LOOKUP FROM PROCEDURAL WHERE pattern = "tech_news_premium" WITH LINKS ALL RETURN pattern, links
+      RECALL FROM PROCEDURAL WHERE pattern = "tech_news_premium" WITH LINKS RETURN pattern, links
     expect:
       success: true
       count: 1
@@ -29,7 +30,7 @@ tests:
     spec_ref: "§10 WITH LINKS TYPE filter"
     seed_required: [$PROC_ID]
     query: |
-      LOOKUP FROM PROCEDURAL WHERE pattern = "tech_news_premium" WITH LINKS TYPE "applied_to" RETURN pattern
+      RECALL FROM PROCEDURAL WHERE pattern = "tech_news_premium" WITH LINKS TYPE "applied_to" RETURN pattern
     expect:
       success: true
       count: 1

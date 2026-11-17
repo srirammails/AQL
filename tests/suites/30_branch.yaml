@@ -1,56 +1,22 @@
-# AQL v0.11 Test Suite - BRANCH "<name>"
-# A statement names the memory branch it reads and writes (spec/AQL_SPEC_v0.11_additions.md).
-# Branches are created and merged through the server's API, not AQL: these tests
-# need no branch to exist. BRANCH "main" is the namespace itself.
+# AQL v0.13 Test Suite - the BRANCH "<name>" modifier is gone
+# v0.11 put BRANCH "b" on a statement to read and write a branch of a namespace.
+# In v0.13 (spec/AQL_SPEC_v0.13.md §5) a branch is a namespace: it is made with
+# BRANCH FROM … INTO …, read and written with NAMESPACE "<branch>", merged with
+# MERGE and dropped with FORGET FROM ALL NAMESPACE. Those are tested in
+# 33_branch_fork_merge.yaml.
+# From v0.11: all 6 tests removed (BRANCH "main", unknown branch, BRANCH needs
+# NAMESPACE, LINK … BRANCH, BRANCH as a string: the modifier has no v0.13
+# equivalent). Added: the modifier is refused.
 
-suite: BRANCH
-spec_section: "v0.11"
+suite: BRANCH_MODIFIER_REMOVED
+spec_section: "v0.13"
 requires: server
-total_tests: 6
+total_tests: 1
 
 tests:
   - id: T30-01
-    name: "setup: a record in a namespace"
-    query: |
-      STORE INTO SEMANTIC (key = "t30:a", n = 1) NAMESPACE "t30-space"
-    expect:
-      success: true
-
-  - id: T30-02
-    name: "BRANCH \"main\" reads the namespace itself"
+    name: "the BRANCH \"b\" modifier is refused (use NAMESPACE \"<branch>\")"
     query: |
       RECALL FROM SEMANTIC WHERE key = "t30:a" NAMESPACE "t30-space" BRANCH "main"
-    expect:
-      success: true
-      count: 1
-
-  - id: T30-03
-    name: "a branch that doesn't exist is an error"
-    query: |
-      RECALL FROM SEMANTIC ALL NAMESPACE "t30-space" BRANCH "t30-missing"
-    expect:
-      success: false
-      error_contains: "no branch"
-
-  - id: T30-04
-    name: "BRANCH needs the NAMESPACE it belongs to"
-    query: |
-      STORE INTO SEMANTIC (key = "t30:b", n = 2) BRANCH "t30-b1"
-    expect:
-      success: false
-      error_contains: "NAMESPACE"
-
-  - id: T30-05
-    name: "a LINK names its branch after its NAMESPACE (v0.12)"
-    query: |
-      LINK FROM SEMANTIC WHERE key = "t30:a" TO SEMANTIC WHERE key = "t30:a" TYPE "self" NAMESPACE "t30-space" BRANCH "t30-missing"
-    expect:
-      success: false
-      error_contains: "no branch"
-
-  - id: T30-06
-    name: "BRANCH is a string"
-    query: |
-      RECALL FROM SEMANTIC ALL NAMESPACE "t30-space" BRANCH t30
     expect:
       success: false

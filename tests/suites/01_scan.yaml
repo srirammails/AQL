@@ -1,18 +1,21 @@
-# AQL v0.5 Test Suite - §01 SCAN
-# SCAN is restricted to WORKING memory only.
-# Tests cover all 4 WINDOW variants and validation rules.
+# AQL v0.13 Test Suite - §01 RECALL FROM WORKING (was SCAN)
+# spec/AQL_SPEC_v0.13.md §1, §8. SCAN is gone: every read is RECALL, and WINDOW LAST
+# works on anything with time (WORKING and EPISODIC here).
+# From v0.5 (§5, §6, §19): SCAN → RECALL; WINDOW TOP n BY f → ORDER BY f DESC LIMIT n;
+# WINDOW SINCE → a WHERE on the record time (BETWEEN); "SCAN only on WORKING" is now
+# "WINDOW is valid on EPISODIC too".
 
-suite: SCAN
-spec_section: "§5, §6, §19"
+suite: RECALL_WORKING
+spec_section: "v0.13"
 total_tests: 5
 
 tests:
   - id: T01-01
-    name: "SCAN WINDOW LAST N"
-    spec_ref: "§5 SCAN WINDOW LAST N"
+    name: "RECALL FROM WORKING WINDOW LAST N"
+    spec_ref: "v0.13 §1, §8 WINDOW LAST n"
     seed_required: [w-001, w-002]
     query: |
-      SCAN FROM WORKING WINDOW LAST 10 RETURN bid_id, campaign
+      RECALL FROM WORKING WINDOW LAST 10 RETURN bid_id, campaign
     expect:
       success: true
       count: 2
@@ -21,22 +24,22 @@ tests:
         - bid_id: "w-002"
 
   - id: T01-02
-    name: "SCAN WINDOW LAST duration"
-    spec_ref: "§6 WINDOW LAST duration"
+    name: "RECALL FROM WORKING WINDOW LAST duration"
+    spec_ref: "v0.13 §8 WINDOW LAST duration"
     seed_required: [w-001, w-002]
     query: |
-      SCAN FROM WORKING WINDOW LAST 30s RETURN bid_id
+      RECALL FROM WORKING WINDOW LAST 30s RETURN bid_id
     expect:
       success: true
       count_gte: 0
       # Records created within last 30 seconds should be returned
 
   - id: T01-03
-    name: "SCAN WINDOW TOP BY field"
-    spec_ref: "§6 WINDOW TOP BY field"
+    name: "ORDER BY field DESC LIMIT 1 (was WINDOW TOP 1 BY field)"
+    spec_ref: "v0.13 §8 ORDER BY / LIMIT"
     seed_required: [w-001, w-002]
     query: |
-      SCAN FROM WORKING WINDOW TOP 1 BY priority RETURN bid_id, priority
+      RECALL FROM WORKING ORDER BY priority DESC LIMIT 1 RETURN bid_id, priority
     expect:
       success: true
       count: 1
@@ -45,23 +48,24 @@ tests:
           priority: 10
 
   - id: T01-04
-    name: "SCAN WINDOW SINCE key_expr"
-    spec_ref: "§6 WINDOW SINCE key_expr"
-    seed_required: [w-001]
+    name: "WHERE created_at BETWEEN … AND … (was WINDOW SINCE)"
+    spec_ref: "v0.13 §8 conditions BETWEEN"
+    seed_required: [w-001, w-002]
     query: |
-      SCAN FROM WORKING WINDOW SINCE bid_id = "w-001" RETURN bid_id
+      RECALL FROM WORKING WHERE created_at BETWEEN "2000-01-01T00:00:00Z" AND "2999-01-01T00:00:00Z" RETURN bid_id
+    expect:
+      success: true
+      count_gte: 2
+      contains:
+        - bid_id: "w-001"
+        - bid_id: "w-002"
+
+  - id: T01-05
+    name: "WINDOW is valid on EPISODIC too (was: SCAN only on WORKING)"
+    spec_ref: "v0.13 §8 WINDOW (anything with time)"
+    seed_required: [e-001]
+    query: |
+      RECALL FROM EPISODIC WINDOW LAST 5 RETURN bid_id
     expect:
       success: true
       count_gte: 1
-      contains:
-        - bid_id: "w-001"
-
-  - id: T01-05
-    name: "SCAN only valid on WORKING"
-    spec_ref: "§19 Validation - SCAN only WORKING"
-    seed_required: []
-    query: |
-      SCAN FROM EPISODIC WINDOW LAST 5 RETURN bid_id
-    expect:
-      success: false
-      error_contains: "SCAN"

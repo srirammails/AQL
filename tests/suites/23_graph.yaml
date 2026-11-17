@@ -1,11 +1,22 @@
-# AQL v0.8 Test Suite - graph reads
-# Multi-hop FOLLOW LINKS, link direction, MIN_WEIGHT, TYPE IN / ALL, and facts
-# (spec/AQL_SPEC_v0.8_additions.md). Tests run in order; the first ones create
-# the graph: g_a →next→ g_b →next→ g_c →next→ g_d, g_x →next→ g_b, g_a →knows→ g_x.
+# AQL v0.13 Test Suite - graph reads, and relationships as links
+# Multi-hop FOLLOW LINKS, both directions, WEIGHT (a minimum), TYPE ("a", "b"), and
+# relationships as LINKs between SEMANTIC records (spec/AQL_SPEC_v0.13.md §2, §3,
+# §8). Tests run in order; the first ones create the graph:
+# g_a -next(1.0)- g_b -next(0.5)- g_c -next(0.5)- g_d, g_x -next(0.4)- g_b,
+# g_a -knows(0.9)- g_x. Links are followed in both directions.
+# From v0.8 §1-§6: LINK … TO → INTO; LOOKUP … KEY id = → RECALL … WHERE key =;
+# FOLLOW / WITH LINKS ALL → no type; MIN_WEIGHT → WEIGHT; TYPE IN (…) → TYPE (…);
+# INBOUND / BOTH removed (old T23-14 INBOUND removed; BOTH, DEPTH and WITH LINKS
+# expectations recomputed for both directions).
+# Facts (old T23-23..T23-34): STORE … FACT (subject, predicate, object) → STORE the
+# records, then LINK … TYPE predicate; superseding → UNLINK + LINK; FACT MULTI →
+# several LINKs of one TYPE; FACT value → a field set with UPDATE. Removed: "one
+# current fact" (no fact records to count), the two FACT parse errors (now one test:
+# FACT is refused). Added: INBOUND and MIN_WEIGHT refused.
 
 suite: GRAPH
-spec_section: "v0.8 §1-§6"
-total_tests: 34
+spec_section: "v0.13"
+total_tests: 39
 
 tests:
   - id: T23-01
@@ -46,7 +57,7 @@ tests:
   - id: T23-06
     name: "setup: LINK g_a → g_b (next)"
     query: |
-      LINK FROM SEMANTIC WHERE concept = "g_a" TO SEMANTIC WHERE concept = "g_b" TYPE "next" WEIGHT 1.0
+      LINK FROM SEMANTIC WHERE concept = "g_a" INTO SEMANTIC WHERE concept = "g_b" TYPE "next" WEIGHT 1.0
     expect:
       success: true
       count: 1
@@ -54,7 +65,7 @@ tests:
   - id: T23-07
     name: "setup: LINK g_b → g_c (next)"
     query: |
-      LINK FROM SEMANTIC WHERE concept = "g_b" TO SEMANTIC WHERE concept = "g_c" TYPE "next" WEIGHT 0.5
+      LINK FROM SEMANTIC WHERE concept = "g_b" INTO SEMANTIC WHERE concept = "g_c" TYPE "next" WEIGHT 0.5
     expect:
       success: true
       count: 1
@@ -62,7 +73,7 @@ tests:
   - id: T23-08
     name: "setup: LINK g_c → g_d (next)"
     query: |
-      LINK FROM SEMANTIC WHERE concept = "g_c" TO SEMANTIC WHERE concept = "g_d" TYPE "next" WEIGHT 0.5
+      LINK FROM SEMANTIC WHERE concept = "g_c" INTO SEMANTIC WHERE concept = "g_d" TYPE "next" WEIGHT 0.5
     expect:
       success: true
       count: 1
@@ -70,7 +81,7 @@ tests:
   - id: T23-09
     name: "setup: LINK g_x → g_b (next)"
     query: |
-      LINK FROM SEMANTIC WHERE concept = "g_x" TO SEMANTIC WHERE concept = "g_b" TYPE "next" WEIGHT 0.4
+      LINK FROM SEMANTIC WHERE concept = "g_x" INTO SEMANTIC WHERE concept = "g_b" TYPE "next" WEIGHT 0.4
     expect:
       success: true
       count: 1
@@ -78,7 +89,7 @@ tests:
   - id: T23-10
     name: "setup: LINK g_a → g_x (knows)"
     query: |
-      LINK FROM SEMANTIC WHERE concept = "g_a" TO SEMANTIC WHERE concept = "g_x" TYPE "knows" WEIGHT 0.9
+      LINK FROM SEMANTIC WHERE concept = "g_a" INTO SEMANTIC WHERE concept = "g_x" TYPE "knows" WEIGHT 0.9
     expect:
       success: true
       count: 1
@@ -94,23 +105,26 @@ tests:
         data.records.0.data.concept: "g_b"
 
   - id: T23-12
-    name: "DEPTH 3: every record within 3 hops, nearest first (v0.8 §2)"
+    name: "DEPTH 3: every record within 3 hops, nearest first, by path weight within a hop"
+    # hop 1: g_b (1.0); hop 2: g_c (0.5), g_x (0.4, reached through g_x → g_b);
+    # hop 3: g_d (0.25)
     query: |
       RECALL FROM SEMANTIC WHERE concept = "g_a" FOLLOW LINKS TYPE "next" DEPTH 3
     expect:
       success: true
-      count: 3
+      count: 4
       fields:
         data.records.0.data.concept: "g_b"
         data.records.1.data.concept: "g_c"
-        data.records.2.data.concept: "g_d"
-        data.records.2.data._hop: 3
-        data.records.2.data._path_weight: 0.25
+        data.records.2.data.concept: "g_x"
+        data.records.3.data.concept: "g_d"
+        data.records.3.data._hop: 3
+        data.records.3.data._path_weight: 0.25
 
   - id: T23-13
-    name: "cycle-safe: g_b ← g_x ← g_a is not revisited"
+    name: "cycle-safe: g_b and g_x are each returned once"
     query: |
-      RECALL FROM SEMANTIC WHERE concept = "g_a" FOLLOW LINKS ALL DEPTH 5
+      RECALL FROM SEMANTIC WHERE concept = "g_a" FOLLOW LINKS DEPTH 5
     expect:
       success: true
       count: 4
@@ -121,20 +135,9 @@ tests:
         data.records.3.data.concept: "g_d"
 
   - id: T23-14
-    name: "INBOUND: who links to g_b (v0.8 §3)"
+    name: "both directions: every record linked to g_b, by link weight"
     query: |
-      RECALL FROM SEMANTIC WHERE concept = "g_b" FOLLOW LINKS TYPE "next" INBOUND
-    expect:
-      success: true
-      count: 2
-      fields:
-        data.records.0.data.concept: "g_a"
-        data.records.1.data.concept: "g_x"
-
-  - id: T23-15
-    name: "BOTH: either way, by link weight"
-    query: |
-      RECALL FROM SEMANTIC WHERE concept = "g_b" FOLLOW LINKS TYPE "next" BOTH
+      RECALL FROM SEMANTIC WHERE concept = "g_b" FOLLOW LINKS TYPE "next"
     expect:
       success: true
       count: 3
@@ -143,20 +146,32 @@ tests:
         data.records.1.data.concept: "g_c"
         data.records.2.data.concept: "g_x"
 
-  - id: T23-16
-    name: "MIN_WEIGHT drops light links (v0.8 §4)"
+  - id: T23-15
+    name: "WEIGHT drops light links (at least 0.5)"
     query: |
-      RECALL FROM SEMANTIC WHERE concept = "g_b" FOLLOW LINKS TYPE "next" INBOUND MIN_WEIGHT 0.5
+      RECALL FROM SEMANTIC WHERE concept = "g_b" FOLLOW LINKS TYPE "next" WEIGHT 0.5
     expect:
       success: true
-      count: 1
+      count: 2
       fields:
         data.records.0.data.concept: "g_a"
+        data.records.1.data.concept: "g_c"
+
+  - id: T23-16
+    name: "TYPE (\"a\", \"b\") picks several types"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "g_a" FOLLOW LINKS TYPE ("next", "knows")
+    expect:
+      success: true
+      count: 2
+      fields:
+        data.records.0.data.concept: "g_b"
+        data.records.1.data.concept: "g_x"
 
   - id: T23-17
-    name: "TYPE IN picks several types"
+    name: "no type: every type"
     query: |
-      RECALL FROM SEMANTIC WHERE concept = "g_a" FOLLOW LINKS TYPE IN ("next", "knows")
+      RECALL FROM SEMANTIC WHERE concept = "g_a" FOLLOW LINKS
     expect:
       success: true
       count: 2
@@ -165,40 +180,30 @@ tests:
         data.records.1.data.concept: "g_x"
 
   - id: T23-18
-    name: "no type: every type"
+    name: "RECALL by key … FOLLOW LINKS returns the linked records"
     query: |
-      RECALL FROM SEMANTIC WHERE concept = "g_a" FOLLOW LINKS 
+      RECALL FROM SEMANTIC WHERE key = "g-a" FOLLOW LINKS TYPE "next" DEPTH 2
     expect:
       success: true
-      count: 2
-      fields:
-        data.records.0.data.concept: "g_b"
-        data.records.1.data.concept: "g_x"
-
-  - id: T23-19
-    name: "LOOKUP … FOLLOW LINKS returns the linked records"
-    query: |
-      LOOKUP FROM SEMANTIC KEY id = "g-a" FOLLOW LINKS TYPE "next" DEPTH 2
-    expect:
-      success: true
-      count: 2
+      count: 3
       fields:
         data.records.0.data.concept: "g_b"
         data.records.1.data.concept: "g_c"
+        data.records.2.data.concept: "g_x"
 
-  - id: T23-20
-    name: "WITH LINKS INBOUND lists links pointing at the record"
+  - id: T23-19
+    name: "WITH LINKS lists the links at either end of the record"
     query: |
-      RECALL FROM SEMANTIC WHERE concept = "g_b" WITH LINKS ALL INBOUND
+      RECALL FROM SEMANTIC WHERE concept = "g_b" WITH LINKS
     expect:
       success: true
       count: 1
-      links_count: 2
+      links_count: 3
 
-  - id: T23-21
-    name: "WITH LINKS TYPE IN … MIN_WEIGHT"
+  - id: T23-20
+    name: "WITH LINKS TYPE (…) WEIGHT"
     query: |
-      RECALL FROM SEMANTIC WHERE concept = "g_a" WITH LINKS TYPE IN ("knows") MIN_WEIGHT 0.5
+      RECALL FROM SEMANTIC WHERE concept = "g_a" WITH LINKS TYPE ("knows", "likes") WEIGHT 0.5
     expect:
       success: true
       count: 1
@@ -206,102 +211,152 @@ tests:
       links_contains:
         - link_type: "knows"
 
-  - id: T23-22
-    name: "parse error: TYPE IN needs a list"
+  - id: T23-21
+    name: "TYPE IN (…) is refused (TYPE (…))"
     query: |
-      RECALL FROM SEMANTIC WHERE concept = "g_a" FOLLOW LINKS TYPE IN "next"
+      RECALL FROM SEMANTIC WHERE concept = "g_a" FOLLOW LINKS TYPE IN ("next", "knows")
+    expect:
+      success: false
+
+  - id: T23-22
+    name: "INBOUND is refused (links are followed both ways)"
+    query: |
+      RECALL FROM SEMANTIC WHERE concept = "g_b" FOLLOW LINKS TYPE "next" INBOUND
     expect:
       success: false
 
   - id: T23-23
-    name: "FACT: Ada works at Acme"
+    name: "MIN_WEIGHT is refused (WEIGHT)"
     query: |
-      STORE INTO SEMANTIC FACT (subject = "gf:ada", predicate = "works_at", object = "gf:acme", confidence = 0.9)
+      RECALL FROM SEMANTIC WHERE concept = "g_b" FOLLOW LINKS TYPE "next" MIN_WEIGHT 0.5
     expect:
-      success: true
+      success: false
 
   - id: T23-24
-    name: "FACT makes the entities at its ends"
+    name: "setup: record gf:ada"
     query: |
-      LOOKUP FROM SEMANTIC KEY id = "gf:acme"
+      STORE INTO SEMANTIC (key = "gf:ada", name = "Ada")
     expect:
       success: true
-      count: 1
 
   - id: T23-25
-    name: "a fact is a link of its predicate"
+    name: "setup: record gf:acme"
     query: |
-      LOOKUP FROM SEMANTIC KEY id = "gf:ada" FOLLOW LINKS TYPE "works_at"
+      STORE INTO SEMANTIC (key = "gf:acme", name = "Acme")
     expect:
       success: true
-      count: 1
-      fields:
-        data.records.0.id: "gf:acme"
 
   - id: T23-26
-    name: "FACT again for (subject, predicate) supersedes"
+    name: "setup: record gf:globex"
     query: |
-      STORE INTO SEMANTIC FACT (subject = "gf:ada", predicate = "works_at", object = "gf:globex")
+      STORE INTO SEMANTIC (key = "gf:globex", name = "Globex")
     expect:
       success: true
 
   - id: T23-27
-    name: "the link moved with it"
+    name: "setup: record gf:bob"
     query: |
-      LOOKUP FROM SEMANTIC KEY id = "gf:ada" FOLLOW LINKS TYPE "works_at"
+      STORE INTO SEMANTIC (key = "gf:bob", name = "Bob")
     expect:
       success: true
-      count: 1
-      fields:
-        data.records.0.id: "gf:globex"
 
   - id: T23-28
-    name: "one current fact"
+    name: "setup: record gf:cy"
     query: |
-      RECALL FROM SEMANTIC WHERE subject = "gf:ada" AND predicate = "works_at"
+      STORE INTO SEMANTIC (key = "gf:cy", name = "Cy")
+    expect:
+      success: true
+
+  - id: T23-29
+    name: "Ada works at Acme: a LINK of TYPE works_at (was STORE … FACT)"
+    query: |
+      LINK FROM SEMANTIC WHERE key = "gf:ada" INTO SEMANTIC WHERE key = "gf:acme" TYPE "works_at" WEIGHT 0.9
     expect:
       success: true
       count: 1
 
-  - id: T23-29
-    name: "FACT MULTI keeps one per object"
-    query: |
-      STORE INTO SEMANTIC FACT MULTI (subject = "gf:ada", predicate = "knows", object = "gf:bob")
-    expect:
-      success: true
-
   - id: T23-30
-    name: "FACT MULTI, second object"
+    name: "the relationship is followed as a link"
     query: |
-      STORE INTO SEMANTIC FACT MULTI (subject = "gf:ada", predicate = "knows", object = "gf:cy")
+      RECALL FROM SEMANTIC WHERE key = "gf:ada" FOLLOW LINKS TYPE "works_at"
     expect:
       success: true
+      count: 1
+      contains:
+        - key: "gf:acme"
 
   - id: T23-31
+    name: "a change of employer, step 1: UNLINK the old one"
+    query: |
+      UNLINK FROM SEMANTIC WHERE key = "gf:ada" INTO SEMANTIC WHERE key = "gf:acme" TYPE "works_at"
+    expect:
+      success: true
+      count: 1
+
+  - id: T23-32
+    name: "a change of employer, step 2: LINK the new one (was FACT superseding)"
+    query: |
+      LINK FROM SEMANTIC WHERE key = "gf:ada" INTO SEMANTIC WHERE key = "gf:globex" TYPE "works_at"
+    expect:
+      success: true
+      count: 1
+
+  - id: T23-33
+    name: "one employer now"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "gf:ada" FOLLOW LINKS TYPE "works_at"
+    expect:
+      success: true
+      count: 1
+      contains:
+        - key: "gf:globex"
+
+  - id: T23-34
+    name: "several objects: LINK knows Bob (was FACT MULTI)"
+    query: |
+      LINK FROM SEMANTIC WHERE key = "gf:ada" INTO SEMANTIC WHERE key = "gf:bob" TYPE "knows"
+    expect:
+      success: true
+      count: 1
+
+  - id: T23-35
+    name: "several objects: LINK knows Cy"
+    query: |
+      LINK FROM SEMANTIC WHERE key = "gf:ada" INTO SEMANTIC WHERE key = "gf:cy" TYPE "knows"
+    expect:
+      success: true
+      count: 1
+
+  - id: T23-36
     name: "both are followed"
     query: |
-      LOOKUP FROM SEMANTIC KEY id = "gf:ada" FOLLOW LINKS TYPE "knows"
+      RECALL FROM SEMANTIC WHERE key = "gf:ada" FOLLOW LINKS TYPE "knows"
     expect:
       success: true
       count: 2
 
-  - id: T23-32
-    name: "a literal value is not a link"
+  - id: T23-37
+    name: "a value is a field (was FACT … value =)"
     query: |
-      STORE INTO SEMANTIC FACT (subject = "gf:ada", predicate = "born", value = 1815)
+      UPDATE INTO SEMANTIC WHERE key = "gf:ada" (born = 1815)
     expect:
       success: true
+      count: 1
 
-  - id: T23-33
-    name: "parse error: FACT needs object or value"
+  - id: T23-38
+    name: "the field is on the record; it is not a link"
     query: |
-      STORE INTO SEMANTIC FACT (subject = "gf:ada", predicate = "p")
+      RECALL FROM SEMANTIC WHERE key = "gf:ada" WITH LINKS
     expect:
-      success: false
+      success: true
+      count: 1
+      contains:
+        - born: 1815
+      links_count: 3
 
-  - id: T23-34
-    name: "parse error: FACT is SEMANTIC only"
+  - id: T23-39
+    name: "STORE … FACT is refused"
     query: |
-      STORE INTO EPISODIC FACT (subject = "gf:ada", predicate = "p", object = "gf:x")
+      STORE INTO SEMANTIC FACT (subject = "gf:ada", predicate = "works_at", object = "gf:acme")
     expect:
       success: false

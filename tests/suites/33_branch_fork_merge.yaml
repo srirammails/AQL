@@ -1,0 +1,532 @@
+# AQL v0.13 Test Suite - BRANCH, FORK, MERGE on namespaces
+# spec/AQL_SPEC_v0.13.md §5. BRANCH makes a namespace whose base is another at a
+# point in time (now, or AS OF): reads see the base at that point plus the branch's
+# own writes, writes stay in the branch. FORK is a full, independent copy. MERGE
+# applies one side's changes since the two parted to the other, in one write;
+# a conflict fails unless PREFER SOURCE / PREFER TARGET. FORGET FROM ALL NAMESPACE
+# drops a branch; a namespace with branches can't be dropped. Tests run in order;
+# ${t0} is a time captured after the setup (a record's _recorded_at).
+# New in v0.13 (replaces the v0.11 BRANCH "b" modifier, see 30_branch.yaml).
+# Namespaces: t33-base, branches t33-try (t33-try2 under it), t33-x, t33-y, t33-z,
+# t33-past, forks t33-copy, t33-copy-old, and the unrelated t33-other.
+# A read of a dropped namespace checks only count: 0 (an error is also accepted).
+
+suite: BRANCH_FORK_MERGE
+spec_section: "v0.13"
+requires: server
+total_tests: 65
+
+tests:
+  - id: T33-01
+    name: "setup: a in the base"
+    query: |
+      STORE INTO SEMANTIC (key = "t33:a", n = 1) NAMESPACE "t33-base"
+    expect:
+      success: true
+
+  - id: T33-02
+    name: "setup: b in the base"
+    query: |
+      STORE INTO SEMANTIC (key = "t33:b", n = 1) NAMESPACE "t33-base"
+    expect:
+      success: true
+
+  - id: T33-03
+    name: "the time after the setup (for AS OF below)"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:b" WITH HISTORY NAMESPACE "t33-base"
+    expect:
+      success: true
+      count: 1
+      fields_exist: ["data.records.0.data._recorded_at"]
+    capture:
+      t0: data.records.0.data._recorded_at
+
+  - id: T33-04
+    name: "BRANCH FROM … INTO …: the base as it is now"
+    query: |
+      BRANCH FROM "t33-base" INTO "t33-try"
+    expect:
+      success: true
+
+  - id: T33-05
+    name: "the branch reads the base"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:a" NAMESPACE "t33-try"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.n": 1}
+
+  - id: T33-06
+    name: "UPDATE in the branch"
+    query: |
+      UPDATE INTO SEMANTIC WHERE key = "t33:a" (n = 2) NAMESPACE "t33-try"
+    expect:
+      success: true
+      count: 1
+
+  - id: T33-07
+    name: "STORE in the branch"
+    query: |
+      STORE INTO SEMANTIC (key = "t33:c", n = 1) NAMESPACE "t33-try"
+    expect:
+      success: true
+
+  - id: T33-08
+    name: "the branch sees its own UPDATE"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:a" NAMESPACE "t33-try"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.n": 2}
+
+  - id: T33-09
+    name: "the branch sees the base plus its own records"
+    query: |
+      RECALL FROM SEMANTIC WHERE key STARTS_WITH "t33:" NAMESPACE "t33-try"
+    expect:
+      success: true
+      count: 3
+
+  - id: T33-10
+    name: "the base is unaffected by the branch's UPDATE"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:a" NAMESPACE "t33-base"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.n": 1}
+
+  - id: T33-11
+    name: "the base doesn't have the branch's record"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:c" NAMESPACE "t33-base"
+    expect:
+      success: true
+      count: 0
+
+  - id: T33-12
+    name: "a base write after the branch was made"
+    query: |
+      UPDATE INTO SEMANTIC WHERE key = "t33:b" (n = 5) NAMESPACE "t33-base"
+    expect:
+      success: true
+      count: 1
+
+  - id: T33-13
+    name: "the branch reads the base as it was at the branch point"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:b" NAMESPACE "t33-try"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.n": 1}
+
+  - id: T33-14
+    name: "a branch can be branched again"
+    query: |
+      BRANCH FROM "t33-try" INTO "t33-try2"
+    expect:
+      success: true
+
+  - id: T33-15
+    name: "STORE in the branch of the branch"
+    query: |
+      STORE INTO SEMANTIC (key = "t33:f", n = 1) NAMESPACE "t33-try2"
+    expect:
+      success: true
+
+  - id: T33-16
+    name: "MERGE a branch of a branch into its parent"
+    query: |
+      MERGE FROM "t33-try2" INTO "t33-try"
+    expect:
+      success: true
+
+  - id: T33-17
+    name: "the parent has the record"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:f" NAMESPACE "t33-try"
+    expect:
+      success: true
+      count: 1
+
+  - id: T33-18
+    name: "FORK: a full, independent copy"
+    query: |
+      FORK FROM "t33-base" INTO "t33-copy"
+    expect:
+      success: true
+
+  - id: T33-19
+    name: "the fork has the base's records as they are now"
+    query: |
+      RECALL FROM SEMANTIC WHERE key STARTS_WITH "t33:" NAMESPACE "t33-copy"
+    expect:
+      success: true
+      count: 2
+      contains:
+        - {key: "t33:a", n: 1}
+        - {key: "t33:b", n: 5}
+
+  - id: T33-20
+    name: "a base write after the fork"
+    query: |
+      STORE INTO SEMANTIC (key = "t33:d", n = 1) NAMESPACE "t33-base"
+    expect:
+      success: true
+
+  - id: T33-21
+    name: "the fork doesn't see later base changes"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:d" NAMESPACE "t33-copy"
+    expect:
+      success: true
+      count: 0
+
+  - id: T33-22
+    name: "UPDATE in the fork"
+    query: |
+      UPDATE INTO SEMANTIC WHERE key = "t33:a" (n = 9) NAMESPACE "t33-copy"
+    expect:
+      success: true
+      count: 1
+
+  - id: T33-23
+    name: "the base is unaffected by the fork's UPDATE"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:a" NAMESPACE "t33-base"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.n": 1}
+
+  - id: T33-24
+    name: "MERGE FROM branch INTO base: no conflicts (each side changed other records)"
+    query: |
+      MERGE FROM "t33-try" INTO "t33-base"
+    expect:
+      success: true
+
+  - id: T33-25
+    name: "the base has the branch's UPDATE"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:a" NAMESPACE "t33-base"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.n": 2}
+
+  - id: T33-26
+    name: "the base has the branch's records (and its child's)"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:c" OR key = "t33:f" NAMESPACE "t33-base"
+    expect:
+      success: true
+      count: 2
+
+  - id: T33-27
+    name: "the base keeps its own change"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:b" NAMESPACE "t33-base"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.n": 5}
+
+  - id: T33-28
+    name: "setup: branch x"
+    query: |
+      BRANCH FROM "t33-base" INTO "t33-x"
+    expect:
+      success: true
+
+  - id: T33-29
+    name: "setup: branch y"
+    query: |
+      BRANCH FROM "t33-base" INTO "t33-y"
+    expect:
+      success: true
+
+  - id: T33-30
+    name: "setup: branch z"
+    query: |
+      BRANCH FROM "t33-base" INTO "t33-z"
+    expect:
+      success: true
+
+  - id: T33-31
+    name: "the base changes a"
+    query: |
+      UPDATE INTO SEMANTIC WHERE key = "t33:a" (n = 10) NAMESPACE "t33-base"
+    expect:
+      success: true
+      count: 1
+
+  - id: T33-32
+    name: "x changes a too"
+    query: |
+      UPDATE INTO SEMANTIC WHERE key = "t33:a" (n = 20) NAMESPACE "t33-x"
+    expect:
+      success: true
+      count: 1
+
+  - id: T33-33
+    name: "y changes a too"
+    query: |
+      UPDATE INTO SEMANTIC WHERE key = "t33:a" (n = 30) NAMESPACE "t33-y"
+    expect:
+      success: true
+      count: 1
+
+  - id: T33-34
+    name: "MERGE with a conflict and no PREFER fails"
+    query: |
+      MERGE FROM "t33-x" INTO "t33-base"
+    expect:
+      success: false
+      error_contains: "conflict"
+
+  - id: T33-35
+    name: "a failed MERGE writes nothing"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:a" NAMESPACE "t33-base"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.n": 10}
+
+  - id: T33-36
+    name: "MERGE … PREFER TARGET: the base wins"
+    query: |
+      MERGE FROM "t33-y" INTO "t33-base" PREFER TARGET
+    expect:
+      success: true
+
+  - id: T33-37
+    name: "the base kept its value"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:a" NAMESPACE "t33-base"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.n": 10}
+
+  - id: T33-38
+    name: "MERGE … PREFER SOURCE: the branch wins"
+    query: |
+      MERGE FROM "t33-x" INTO "t33-base" PREFER SOURCE
+    expect:
+      success: true
+
+  - id: T33-39
+    name: "the base has the branch's value"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:a" NAMESPACE "t33-base"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.n": 20}
+
+  - id: T33-40
+    name: "STORE in branch z"
+    query: |
+      STORE INTO SEMANTIC (key = "t33:z1", n = 1) NAMESPACE "t33-z"
+    expect:
+      success: true
+
+  - id: T33-41
+    name: "a new base record"
+    query: |
+      STORE INTO SEMANTIC (key = "t33:e", n = 1) NAMESPACE "t33-base"
+    expect:
+      success: true
+
+  - id: T33-42
+    name: "MERGE FROM base INTO branch: the base's newer changes"
+    query: |
+      MERGE FROM "t33-base" INTO "t33-z"
+    expect:
+      success: true
+
+  - id: T33-43
+    name: "the branch has the base's new record"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:e" NAMESPACE "t33-z"
+    expect:
+      success: true
+      count: 1
+
+  - id: T33-44
+    name: "the branch has the base's newer value"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:a" NAMESPACE "t33-z"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.n": 20}
+
+  - id: T33-45
+    name: "the branch keeps its own record"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:z1" NAMESPACE "t33-z"
+    expect:
+      success: true
+      count: 1
+
+  - id: T33-46
+    name: "a fork can still be merged (the base wins its conflict)"
+    query: |
+      MERGE FROM "t33-copy" INTO "t33-base" PREFER TARGET
+    expect:
+      success: true
+
+  - id: T33-47
+    name: "the base kept its value"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:a" NAMESPACE "t33-base"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.n": 20}
+
+  - id: T33-48
+    name: "BRANCH … AS OF a time"
+    query: |
+      BRANCH FROM "t33-base" INTO "t33-past" AS OF "${t0}"
+    expect:
+      success: true
+
+  - id: T33-49
+    name: "the branch reads the base as it was then"
+    query: |
+      RECALL FROM SEMANTIC WHERE key STARTS_WITH "t33:" NAMESPACE "t33-past"
+    expect:
+      success: true
+      count: 2
+      contains:
+        - {key: "t33:a", n: 1}
+        - {key: "t33:b", n: 1}
+
+  - id: T33-50
+    name: "FORK … AS OF a time"
+    query: |
+      FORK FROM "t33-base" INTO "t33-copy-old" AS OF "${t0}"
+    expect:
+      success: true
+
+  - id: T33-51
+    name: "the fork has the records as they were then"
+    query: |
+      RECALL FROM SEMANTIC WHERE key STARTS_WITH "t33:" NAMESPACE "t33-copy-old"
+    expect:
+      success: true
+      count: 2
+      contains:
+        - {key: "t33:a", n: 1}
+        - {key: "t33:b", n: 1}
+
+  - id: T33-52
+    name: "setup: an unrelated namespace"
+    query: |
+      STORE INTO SEMANTIC (key = "t33:o", n = 1) NAMESPACE "t33-other"
+    expect:
+      success: true
+
+  - id: T33-53
+    name: "two namespaces with no common base can't be merged"
+    query: |
+      MERGE FROM "t33-other" INTO "t33-base"
+    expect:
+      success: false
+
+  - id: T33-54
+    name: "dropping a namespace that has branches is refused"
+    query: |
+      FORGET FROM ALL NAMESPACE "t33-base"
+    expect:
+      success: false
+      error_contains: "branch"
+
+  - id: T33-55
+    name: "the base is still there"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t33:a" NAMESPACE "t33-base"
+    expect:
+      success: true
+      count: 1
+
+  - id: T33-56
+    name: "drop branch t33-try2"
+    query: |
+      FORGET FROM ALL NAMESPACE "t33-try2"
+    expect:
+      success: true
+
+  - id: T33-57
+    name: "drop branch t33-try"
+    query: |
+      FORGET FROM ALL NAMESPACE "t33-try"
+    expect:
+      success: true
+
+  - id: T33-58
+    name: "drop branch t33-x"
+    query: |
+      FORGET FROM ALL NAMESPACE "t33-x"
+    expect:
+      success: true
+
+  - id: T33-59
+    name: "drop branch t33-y"
+    query: |
+      FORGET FROM ALL NAMESPACE "t33-y"
+    expect:
+      success: true
+
+  - id: T33-60
+    name: "drop branch t33-z"
+    query: |
+      FORGET FROM ALL NAMESPACE "t33-z"
+    expect:
+      success: true
+
+  - id: T33-61
+    name: "drop branch t33-past"
+    query: |
+      FORGET FROM ALL NAMESPACE "t33-past"
+    expect:
+      success: true
+
+  - id: T33-62
+    name: "a dropped branch has no records"
+    query: |
+      RECALL FROM SEMANTIC WHERE key STARTS_WITH "t33:" NAMESPACE "t33-past"
+    expect:
+      count: 0
+
+  - id: T33-63
+    name: "with its branches dropped, the base can be dropped"
+    query: |
+      FORGET FROM ALL NAMESPACE "t33-base"
+    expect:
+      success: true
+
+  - id: T33-64
+    name: "the base is gone"
+    query: |
+      RECALL FROM SEMANTIC WHERE key STARTS_WITH "t33:" NAMESPACE "t33-base"
+    expect:
+      count: 0
+
+  - id: T33-65
+    name: "a fork doesn't depend on its base"
+    query: |
+      RECALL FROM SEMANTIC WHERE key STARTS_WITH "t33:" NAMESPACE "t33-copy"
+    expect:
+      success: true
+      count: 2
+      contains:
+        - {key: "t33:a", n: 9}

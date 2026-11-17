@@ -1,12 +1,18 @@
-# AQL v0.13 Test Suite - MERGE ENTITY within a NAMESPACE
-# Both entities are the namespace's; another namespace's entities of the same keys
-# are untouched, and the merged key finds the survivor only within the namespace
-# (spec/AQL_SPEC_v0.13_additions.md). Tests run in order.
+# AQL v0.13 Test Suite - aliases within a NAMESPACE
+# An alias belongs to the namespace of the statement that set it: another
+# namespace's records of the same keys are untouched, and the alias finds the
+# survivor only within its namespace (spec/AQL_SPEC_v0.13.md §4). Tests run in order.
+# From the superseded v0.13 additions (MERGE ENTITY … NAMESPACE): MERGE ENTITY → UPDATE … (aliases)
+# + FORGET, both with NAMESPACE; facts → LINKs of TYPE wrote; LOOKUP KEY id = →
+# RECALL WHERE key =. Removed: "merged again: refused", "an entity the namespace
+# doesn't have: refused", "NAMESPACE is the last clause" (no MERGE ENTITY).
+# Added: setups for the linked records, the separate FORGET, q's survivor key has
+# no alias link.
 
-suite: MERGE_NAMESPACE
+suite: ALIASES_NAMESPACE
 spec_section: "v0.13"
 requires: server
-total_tests: 13
+total_tests: 16
 
 tests:
   - id: T32-01
@@ -17,96 +23,122 @@ tests:
       success: true
 
   - id: T32-02
-    name: "setup: a fact about the duplicate in p"
+    name: "setup: the duplicate in p"
     query: |
-      STORE INTO SEMANTIC FACT (subject = "t32:lovelace", predicate = "wrote", object = "t32:notes") NAMESPACE "t32-p"
+      STORE INTO SEMANTIC (key = "t32:lovelace", name = "Ada Lovelace") NAMESPACE "t32-p"
     expect:
       success: true
 
   - id: T32-03
+    name: "setup: notes in p"
+    query: |
+      STORE INTO SEMANTIC (key = "t32:notes", name = "Notes") NAMESPACE "t32-p"
+    expect:
+      success: true
+
+  - id: T32-04
+    name: "setup: the duplicate wrote the notes, in p"
+    query: |
+      LINK FROM SEMANTIC WHERE key = "t32:lovelace" INTO SEMANTIC WHERE key = "t32:notes" TYPE "wrote" NAMESPACE "t32-p"
+    expect:
+      success: true
+      count: 1
+
+  - id: T32-05
     name: "setup: the same keys in namespace q"
     query: |
       STORE INTO SEMANTIC (key = "t32:ada", name = "Ada Q") NAMESPACE "t32-q"
     expect:
       success: true
 
-  - id: T32-04
-    name: "setup: the duplicate's fact in q"
-    query: |
-      STORE INTO SEMANTIC FACT (subject = "t32:lovelace", predicate = "wrote", object = "t32:notes") NAMESPACE "t32-q"
-    expect:
-      success: true
-
-  - id: T32-05
-    name: "merge in p: one fact moves"
-    query: |
-      MERGE ENTITY "t32:lovelace" INTO "t32:ada" NAMESPACE "t32-p"
-    expect:
-      success: true
-      count: 1
-
   - id: T32-06
-    name: "p: the fact is about the survivor"
+    name: "setup: the duplicate in q"
     query: |
-      RECALL FROM SEMANTIC WHERE subject = "t32:ada" NAMESPACE "t32-p"
+      STORE INTO SEMANTIC (key = "t32:lovelace", name = "Lovelace Q") NAMESPACE "t32-q"
     expect:
       success: true
-      count: 1
-      fields: {"data.records.0.data.object": "t32:notes"}
 
   - id: T32-07
-    name: "p: the duplicate is gone"
+    name: "setup: notes in q"
     query: |
-      RECALL FROM SEMANTIC WHERE subject = "t32:lovelace" NAMESPACE "t32-p"
+      STORE INTO SEMANTIC (key = "t32:notes", name = "Notes Q") NAMESPACE "t32-q"
     expect:
       success: true
-      count: 0
 
   - id: T32-08
-    name: "q: untouched"
+    name: "setup: the duplicate wrote the notes, in q"
     query: |
-      RECALL FROM SEMANTIC WHERE subject = "t32:lovelace" NAMESPACE "t32-q"
+      LINK FROM SEMANTIC WHERE key = "t32:lovelace" INTO SEMANTIC WHERE key = "t32:notes" TYPE "wrote" NAMESPACE "t32-q"
     expect:
       success: true
       count: 1
 
   - id: T32-09
-    name: "p: LOOKUP KEY by the alias finds the survivor"
+    name: "p: the duplicate's key becomes the survivor's alias"
     query: |
-      LOOKUP FROM SEMANTIC KEY id = "t32:lovelace" NAMESPACE "t32-p"
+      UPDATE INTO SEMANTIC WHERE key = "t32:ada" (aliases = ["t32:lovelace"]) NAMESPACE "t32-p"
+    expect:
+      success: true
+      count: 1
+
+  - id: T32-10
+    name: "p: FORGET the duplicate"
+    query: |
+      FORGET FROM SEMANTIC WHERE key = "t32:lovelace" NAMESPACE "t32-p"
+    expect:
+      success: true
+      count: 1
+
+  - id: T32-11
+    name: "p: the link is the survivor's"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t32:ada" FOLLOW LINKS TYPE "wrote" NAMESPACE "t32-p"
+    expect:
+      success: true
+      count: 1
+      contains:
+        - key: "t32:notes"
+
+  - id: T32-12
+    name: "p: the duplicate's record is gone"
+    query: |
+      RECALL FROM SEMANTIC WHERE name = "Ada Lovelace" NAMESPACE "t32-p"
+    expect:
+      success: true
+      count: 0
+
+  - id: T32-13
+    name: "q: untouched, the duplicate still has its link"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t32:lovelace" FOLLOW LINKS TYPE "wrote" NAMESPACE "t32-q"
+    expect:
+      success: true
+      count: 1
+      contains:
+        - name: "Notes Q"
+
+  - id: T32-14
+    name: "p: a read by the alias finds the survivor"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t32:lovelace" NAMESPACE "t32-p"
     expect:
       success: true
       count: 1
       fields: {"data.records.0.data.key": "t32:ada", "data.records.0.data.aliases.0": "t32:lovelace"}
 
-  - id: T32-10
-    name: "q: the same key is q's own entity"
+  - id: T32-15
+    name: "q: the same key is q's own record"
     query: |
-      LOOKUP FROM SEMANTIC KEY id = "t32:lovelace" NAMESPACE "t32-q"
+      RECALL FROM SEMANTIC WHERE key = "t32:lovelace" NAMESPACE "t32-q"
     expect:
       success: true
       count: 1
-      fields: {"data.records.0.data.key": "t32:lovelace"}
+      fields: {"data.records.0.data.key": "t32:lovelace", "data.records.0.data.name": "Lovelace Q"}
 
-  - id: T32-11
-    name: "merged again: refused"
+  - id: T32-16
+    name: "q: the survivor's key has no alias there, so no link"
     query: |
-      MERGE ENTITY "t32:lovelace" INTO "t32:ada" NAMESPACE "t32-p"
+      RECALL FROM SEMANTIC WHERE key = "t32:ada" FOLLOW LINKS TYPE "wrote" NAMESPACE "t32-q"
     expect:
-      success: false
-      error_contains: "already merged"
-
-  - id: T32-12
-    name: "an entity the namespace doesn't have: refused"
-    query: |
-      MERGE ENTITY "t32:nobody" INTO "t32:ada" NAMESPACE "t32-p"
-    expect:
-      success: false
-      error_contains: "no entity"
-
-  - id: T32-13
-    name: "NAMESPACE is the last clause"
-    query: |
-      MERGE ENTITY "t32:lovelace" NAMESPACE "t32-p" INTO "t32:ada"
-    expect:
-      success: false
+      success: true
+      count: 0

@@ -1,9 +1,14 @@
-# AQL v0.9 Test Suite - WINDOW on RECALL FROM EPISODIC
+# AQL v0.13 Test Suite - WINDOW on RECALL FROM EPISODIC
 # The window runs over the episodes in commit order, before ORDER BY / LIMIT /
-# AGGREGATE (spec/AQL_SPEC_v0.9_additions.md §2). Setup: five episodes w25, n 1..5.
+# AGGREGATE (spec/AQL_SPEC_v0.13.md §8; from v0.9 §2). Setup: five episodes w25,
+# n 1..5.
+# From v0.9 §2: WINDOW SINCE n = 3 → WHERE … AND n >= 3 (a comparison; n grows in
+# commit order); WINDOW TOP 2 BY sev → ORDER BY sev DESC LIMIT 2. Removed: "WINDOW on
+# another memory type is an error" (v0.13: WINDOW works on anything with time) and
+# "WINDOW on LOOKUP" (no LOOKUP). Added: WINDOW TOP and WINDOW SINCE are refused.
 
 suite: WINDOW_EPISODIC
-spec_section: "v0.9 §2"
+spec_section: "v0.13"
 total_tests: 13
 
 tests:
@@ -60,18 +65,18 @@ tests:
       count: 5
 
   - id: T25-08
-    name: "WINDOW SINCE condition"
+    name: "a comparison in WHERE (was WINDOW SINCE n = 3)"
     query: |
-      RECALL FROM EPISODIC WHERE w25 = "t25" WINDOW SINCE n = 3 RETURN n
+      RECALL FROM EPISODIC WHERE w25 = "t25" AND n >= 3 ORDER BY n DESC RETURN n
     expect:
       success: true
       count: 3
       fields: {"data.records.2.data.n": 3}
 
   - id: T25-09
-    name: "WINDOW TOP n BY field"
+    name: "ORDER BY f DESC LIMIT n (was WINDOW TOP n BY f)"
     query: |
-      RECALL FROM EPISODIC WHERE w25 = "t25" WINDOW TOP 2 BY sev ORDER BY sev DESC RETURN n
+      RECALL FROM EPISODIC WHERE w25 = "t25" ORDER BY sev DESC LIMIT 2 RETURN n
     expect:
       success: true
       count: 2
@@ -97,17 +102,15 @@ tests:
         top: 7
 
   - id: T25-12
-    name: "WINDOW on another memory type is an error"
+    name: "WINDOW TOP … BY is refused"
     query: |
-      RECALL FROM SEMANTIC WHERE w25 = "t25" WINDOW LAST 2
+      RECALL FROM EPISODIC WHERE w25 = "t25" WINDOW TOP 2 BY sev
     expect:
       success: false
-      error_contains: "WINDOW is only valid"
 
   - id: T25-13
-    name: "WINDOW on LOOKUP is an error"
+    name: "WINDOW SINCE is refused"
     query: |
-      LOOKUP FROM EPISODIC KEY id = "x" WINDOW LAST 2
+      RECALL FROM EPISODIC WHERE w25 = "t25" WINDOW SINCE n = 3
     expect:
       success: false
-      error_contains: "WINDOW is only valid"

@@ -1,9 +1,11 @@
-# AQL v0.5 Test Suite - §05 STORE INTO
-# STORE covers all 5 memory types, TTL (all time units),
-# SCOPE, NAMESPACE, and validation errors.
+# AQL v0.13 Test Suite - §05 STORE INTO
+# STORE covers all 5 memory types, TTL (all time units), NAMESPACE, and
+# validation errors. spec/AQL_SPEC_v0.13.md §2, §8.
+# From v0.5 (§7, §14, §19): the SCOPE private|shared modifier is removed from
+# T05-02..T05-05 (no v0.13 equivalent; NAMESPACE / IN SCOPE remain).
 
 suite: STORE
-spec_section: "§7, §14, §19"
+spec_section: "v0.13"
 total_tests: 8
 
 tests:
@@ -20,23 +22,22 @@ tests:
         version: 1
 
   - id: T05-02
-    name: "STORE EPISODIC SCOPE NAMESPACE"
-    spec_ref: "§7 STORE EPISODIC SCOPE NAMESPACE"
+    name: "STORE EPISODIC NAMESPACE"
+    spec_ref: "v0.13 §8 NAMESPACE"
     seed_required: []
     query: |
-      STORE INTO EPISODIC (bid_id = "test-e", campaign = "test", won = true, cpm_paid = 2.0) SCOPE private NAMESPACE "test-ns"
+      STORE INTO EPISODIC (bid_id = "test-e", campaign = "test", won = true, cpm_paid = 2.0) NAMESPACE "test-ns"
     expect:
       success: true
       stored:
         namespace: "test-ns"
-        scope: "private"
 
   - id: T05-03
     name: "STORE SEMANTIC"
     spec_ref: "§7 STORE SEMANTIC"
     seed_required: []
     query: |
-      STORE INTO SEMANTIC (concept = "test_concept", avg_cpm = 2.0, active = false) SCOPE private
+      STORE INTO SEMANTIC (concept = "test_concept", avg_cpm = 2.0, active = false)
     expect:
       success: true
       stored:
@@ -47,7 +48,7 @@ tests:
     spec_ref: "§7 STORE PROCEDURAL"
     seed_required: []
     query: |
-      STORE INTO PROCEDURAL (pattern = "test_p", severity = "low", confidence = 0.5, steps = "1. test", success_count = 0, failure_count = 0, variables = "k=v") SCOPE shared
+      STORE INTO PROCEDURAL (pattern = "test_p", severity = "low", confidence = 0.5, steps = "1. test", success_count = 0, failure_count = 0, variables = "k=v")
     expect:
       success: true
       stored:
@@ -60,7 +61,7 @@ tests:
     spec_ref: "§7 STORE TOOLS"
     seed_required: []
     query: |
-      STORE INTO TOOLS (tool_id = "test_tool", name = "test_tool", category = "test", ranking = 0.5, schema = "test_schema") SCOPE shared
+      STORE INTO TOOLS (tool_id = "test_tool", name = "test_tool", category = "test", ranking = 0.5, schema = "test_schema")
     expect:
       success: true
       stored:

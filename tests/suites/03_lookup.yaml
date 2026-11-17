@@ -1,18 +1,21 @@
-# AQL v0.5 Test Suite - §03 LOOKUP
-# LOOKUP is valid on SEMANTIC, PROCEDURAL, and TOOLS only.
-# Tests cover KEY and WHERE predicates plus validation errors.
+# AQL v0.13 Test Suite - §03 RECALL by key (was LOOKUP)
+# spec/AQL_SPEC_v0.13.md §1. LOOKUP is gone: RECALL … WHERE x = v is the exact read,
+# on every memory type.
+# From v0.5 (§5, §19): LOOKUP → RECALL; KEY x = v → WHERE x = v. "LOOKUP invalid on
+# WORKING" is now a valid read on WORKING; "LOOKUP invalid on EPISODIC" was removed
+# (the same read is T02-01).
 
-suite: LOOKUP
-spec_section: "§5, §19"
-total_tests: 5
+suite: RECALL_KEY
+spec_section: "v0.13"
+total_tests: 4
 
 tests:
   - id: T03-01
-    name: "LOOKUP SEMANTIC KEY"
-    spec_ref: "§5 LOOKUP SEMANTIC KEY"
+    name: "RECALL SEMANTIC WHERE concept = (was LOOKUP KEY)"
+    spec_ref: "v0.13 §1 exact read"
     seed_required: [semantic-ai]
     query: |
-      LOOKUP FROM SEMANTIC KEY concept = "ai_enterprise_content" RETURN concept, avg_cpm, iab_category
+      RECALL FROM SEMANTIC WHERE concept = "ai_enterprise_content" RETURN concept, avg_cpm, iab_category
     expect:
       success: true
       count: 1
@@ -22,11 +25,11 @@ tests:
           iab_category: "IAB19"
 
   - id: T03-02
-    name: "LOOKUP SEMANTIC WHERE"
-    spec_ref: "§5 LOOKUP SEMANTIC WHERE"
+    name: "RECALL SEMANTIC WHERE comparison"
+    spec_ref: "v0.13 §1 filtered read"
     seed_required: [semantic-ai, semantic-finance]
     query: |
-      LOOKUP FROM SEMANTIC WHERE avg_cpm > 3 RETURN concept, avg_cpm
+      RECALL FROM SEMANTIC WHERE avg_cpm > 3 RETURN concept, avg_cpm
     expect:
       success: true
       count: 2
@@ -35,11 +38,11 @@ tests:
         - concept: "finance_news"
 
   - id: T03-03
-    name: "LOOKUP PROCEDURAL WHERE"
-    spec_ref: "§5 LOOKUP PROCEDURAL WHERE"
+    name: "RECALL PROCEDURAL WHERE"
+    spec_ref: "v0.13 §1 PROCEDURAL"
     seed_required: [$PROC_ID]
     query: |
-      LOOKUP FROM PROCEDURAL WHERE pattern = "tech_news_premium" RETURN pattern, confidence, steps
+      RECALL FROM PROCEDURAL WHERE pattern = "tech_news_premium" RETURN pattern, confidence, steps
     expect:
       success: true
       count: 1
@@ -47,21 +50,13 @@ tests:
         - pattern: "tech_news_premium"
 
   - id: T03-04
-    name: "LOOKUP invalid on WORKING"
-    spec_ref: "§19 LOOKUP invalid WORKING"
-    seed_required: []
+    name: "an exact read on WORKING (was: LOOKUP invalid on WORKING)"
+    spec_ref: "v0.13 §1 every memory type"
+    seed_required: [w-001]
     query: |
-      LOOKUP FROM WORKING KEY bid_id = "w-001" RETURN bid_id
+      RECALL FROM WORKING WHERE bid_id = "w-001" RETURN bid_id
     expect:
-      success: false
-      error_contains: "LOOKUP"
-
-  - id: T03-05
-    name: "LOOKUP invalid on EPISODIC"
-    spec_ref: "§19 LOOKUP invalid EPISODIC"
-    seed_required: []
-    query: |
-      LOOKUP FROM EPISODIC WHERE bid_id = "e-001" RETURN bid_id
-    expect:
-      success: false
-      error_contains: "LOOKUP"
+      success: true
+      count: 1
+      contains:
+        - bid_id: "w-001"

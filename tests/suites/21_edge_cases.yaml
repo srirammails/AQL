@@ -1,9 +1,10 @@
-# AQL v0.5 Test Suite - §21 Edge Cases
+# AQL v0.13 Test Suite - §21 Edge Cases
 # Edge cases and boundary conditions: empty results, idempotency,
-# type coercion, zero values, TTL units.
+# type coercion, zero values, TTL units. spec/AQL_SPEC_v0.13.md §1, §2, §8.
+# From v0.5: T21-09 drops the removed SCOPE private modifier; the rest unchanged.
 
 suite: EDGE_CASES
-spec_section: "Various"
+spec_section: "v0.13"
 total_tests: 10
 
 tests:
@@ -104,7 +105,7 @@ tests:
     spec_ref: "Edge zero-value float store"
     seed_required: []
     query: |
-      STORE INTO EPISODIC (bid_id = "zero-test", campaign = "x", won = false, cpm_paid = 0.0) SCOPE private NAMESPACE "test"
+      STORE INTO EPISODIC (bid_id = "zero-test", campaign = "x", won = false, cpm_paid = 0.0) NAMESPACE "test"
     expect:
       success: true
       stored:
