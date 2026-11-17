@@ -12,8 +12,8 @@ Namespaces  BRANCH  FORK  MERGE
 Flow        PIPELINE  SUBSCRIBE  UNSUBSCRIBE  PUBLISH
 ```
 
-Memory types: `EPISODIC` (what happened), `SEMANTIC` (what is known: entities and
-facts), `PROCEDURAL` (how to do things), `TOOLS` (what can be used), `WORKING` (the
+Memory types: `EPISODIC` (what happened), `SEMANTIC` (what is known: records and
+the links between them), `PROCEDURAL` (how to do things), `TOOLS` (what can be used), `WORKING` (the
 current session), and `ALL` for reads and FORGET.
 
 Every statement names whose memory it touches with `NAMESPACE "<ns>"` (a server may
@@ -32,7 +32,7 @@ One verb; the engine picks the access path:
 | You write | The engine does |
 |---|---|
 | `RECALL FROM SEMANTIC WHERE key = "person:ada"` | exact lookup by key |
-| `RECALL FROM SEMANTIC WHERE subject = "person:ada"` | facts about an entity (and its aliases, §4) |
+| `RECALL FROM SEMANTIC WHERE key = "org:acme" FOLLOW LINKS TYPE "works_at"` | what is linked to a record (and to its aliases, §4) |
 | `RECALL FROM EPISODIC WHERE pod = "payments" ORDER BY created_at DESC LIMIT 10` | filtered read |
 | `RECALL FROM SEMANTIC LIKE $question MIN_CONFIDENCE 0.7` | similarity (vector + words) |
 | `RECALL FROM PROCEDURAL LIKE "pod OOMKilled restart"` | the best-matching procedures |
@@ -50,9 +50,9 @@ UPDATE INTO <memory> WHERE <conditions> (<field> = <value>, …) <modifiers>
 FORGET FROM <memory> [WHERE <conditions>] <modifiers>
 ```
 
-- A SEMANTIC payload with `subject` and `predicate` is a **fact**
-  (`STORE INTO SEMANTIC (subject = "person:ada", predicate = "works_at", object = "org:acme")`);
-  `multi = true` keeps several objects for one predicate.
+- There are no facts as a kind of their own: a relationship is a LINK (§3), a value
+  is a field (`UPDATE INTO SEMANTIC WHERE key = "person:ada" (age = 36)`). UPDATE
+  keeps the old version as history (`AS OF`, `WITH HISTORY`).
 - `FORGET` erases (a tombstone no read can miss). `FORGET FROM ALL NAMESPACE "x"` with
   no `WHERE` drops the whole namespace — also how a branch is dropped.
 - `TTL 7d` on STORE / UPDATE.
@@ -65,7 +65,9 @@ UNLINK FROM <memory> WHERE <c> TO <memory> WHERE <c> [TYPE "t"] <modifiers>
 ```
 
 LINK on a link that exists sets its weight (create or update). A link's two ends are
-in the statement's namespace.
+in the statement's namespace. Relationships are links: "Ada works at Acme" is
+`LINK FROM SEMANTIC WHERE key = "person:ada" TO SEMANTIC WHERE key = "org:acme" TYPE "works_at"`;
+several links of one TYPE give several objects.
 
 ## 4. Entities known by another name (no MERGE ENTITY)
 
@@ -76,10 +78,10 @@ UPDATE INTO SEMANTIC WHERE key = "person:ada" (aliases = ["person:ada-lovelace"]
 FORGET FROM SEMANTIC WHERE key = "person:ada-lovelace" NAMESPACE "crm"
 ```
 
-- An entity's `aliases` are other keys for it: a read or a new fact using an alias
-  reaches the entity; `WHERE subject = "person:ada"` also matches facts stored under
-  its aliases. Nothing is rewritten.
-- FORGET of an entity removes its own record, not the facts that mention it.
+- A record's `aliases` are other keys for it: a read by an alias, a LINK naming one,
+  and links stored to or from an alias all reach the record. Nothing is rewritten.
+- FORGET of the duplicate removes its own record, not the links that name it (they
+  now reach the survivor through the alias).
 - Either order is safe; a failure between the two leaves nothing half-done.
 
 ## 5. BRANCH, FORK, MERGE — namespaces
@@ -139,7 +141,7 @@ Delivery and acknowledgements are the server's API, not AQL.
 `NAMESPACE`, `IN SCOPE`, `LIMIT`, `ORDER BY … [ASC|DESC]`, `RETURN f, …`, `TTL`,
 `MIN_CONFIDENCE`, `AGGREGATE COUNT(*) AS n, AVG(x) AS a`, `GROUP BY`, `HAVING`,
 `WINDOW LAST n | LAST 30s | SINCE …` (anything with time), `WITH LINKS [TYPE …]`,
-`FOLLOW LINKS [TYPE …] DEPTH n`, `AS OF <time>`, `VALID AT <time>`, `WITH HISTORY`,
+`FOLLOW LINKS [TYPE …] DEPTH n`, `AS OF <time>`, `WITH HISTORY`,
 `TIMEOUT` (PIPELINE only).
 
 Conditions: `= != < <= > >= CONTAINS STARTS_WITH ENDS_WITH IN`, `AND`, `OR`, `( )`.
@@ -152,7 +154,7 @@ Conditions: `= != < <= > >= CONTAINS STARTS_WITH ENDS_WITH IN`, `AND`, `OR`, `( 
 | `KEY x = v`, `ALL` | `WHERE x = v`, no WHERE |
 | `PATTERN … THRESHOLD t` | `LIKE "text" MIN_CONFIDENCE t` |
 | REFLECT … THEN | PIPELINE with a write last |
-| `STORE INTO SEMANTIC FACT [MULTI]` | a payload with subject and predicate; `multi = true` |
+| `STORE INTO SEMANTIC FACT [MULTI]`, `VALID AT` | no facts: relationships are LINKs, values are fields; validity, if needed, is ordinary fields |
 | UPDATE LINK | LINK (create or update) |
 | MERGE ENTITY | UPDATE aliases + FORGET (§4) |
 | WATCH / UNWATCH | SUBSCRIBE RECALL … / UNSUBSCRIBE |
@@ -163,8 +165,6 @@ Conditions: `= != < <= > >= CONTAINS STARTS_WITH ENDS_WITH IN`, `AND`, `OR`, `( 
 
 ## Open points
 
-1. `VALID AT` (fact validity) could fold into `AS OF`; kept for now.
-2. `FROM` / `INTO` could go (`STORE SEMANTIC (…)`); kept for now — reads naturally.
-3. A namespace with branches being dropped: refuse, or drop its branches too? (Forks
-   are unaffected: they hold their own copy.)
-4. MERGE of a branch of a branch into main: through its parent only, or directly?
+Settled (17 Nov): no FACT and no `VALID AT` (user); `FROM` / `INTO` stay; dropping a
+namespace that has branches is refused, naming them (forks hold their own copy); a
+branch of a branch merges into its parent.
