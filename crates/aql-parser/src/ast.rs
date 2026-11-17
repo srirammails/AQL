@@ -308,6 +308,10 @@ pub struct LinkStmt {
     /// records, or its topic and subscriptions).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
+    /// v0.12: `BRANCH "<name>"` after the NAMESPACE: the memory branch the link is on
+    /// (v0.11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 /// UPDATE LINK statement (v0.7): change the weight and/or type of the existing
@@ -328,6 +332,10 @@ pub struct UpdateLinkStmt {
     /// records, or its topic and subscriptions).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
+    /// v0.12: `BRANCH "<name>"` after the NAMESPACE: the memory branch the link is on
+    /// (v0.11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 /// UNLINK statement (v0.7): remove the links between the matched records (of
@@ -344,6 +352,10 @@ pub struct UnlinkStmt {
     /// records, or its topic and subscriptions).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
+    /// v0.12: `BRANCH "<name>"` after the NAMESPACE: the memory branch the link is on
+    /// (v0.11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 /// MERGE statement (v0.10): SEMANTIC entity `from` merges into `into`: its facts

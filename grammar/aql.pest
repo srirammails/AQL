@@ -1,11 +1,18 @@
-// AQL Grammar - Agent Query Language v0.5, plus v0.6 draft additions
+// AQL Grammar - Agent Query Language v0.12 (AQL 0.12.0)
 //
 // AQL encodes agentic intent rather than database mechanics.
 // Core design: AQL expresses what the agent wants. ADB handles how memory works.
 //
-// v0.6 draft: SUBSCRIBE / UNSUBSCRIBE / ACK / PUBLISH / WATCH / UNWATCH and the
-// IN SCOPE "<scope>" clause (see spec/AQL_SPEC_v0.6_additions.md).
-// v0.7 draft: UPDATE LINK and UNLINK (see spec/AQL_SPEC_v0.7_additions.md).
+// The base is spec/AQL_SPEC_v0.5.md; each later version adds to it
+// (spec/AQL_SPEC_v0.<n>_additions.md):
+// v0.6:  SUBSCRIBE / UNSUBSCRIBE / ACK / PUBLISH / WATCH / UNWATCH, IN SCOPE "<scope>"
+// v0.7:  UPDATE LINK and UNLINK
+// v0.8:  FOLLOW LINKS … DEPTH, direction, MIN_WEIGHT, TYPE IN (…), STORE … FACT
+// v0.9:  GROUP BY, WINDOW on RECALL FROM EPISODIC, UPDATE field = null
+// v0.10: fact validity, AS OF / VALID AT / WITH HISTORY, MERGE ENTITY, keys per scope
+// v0.11: BRANCH "<name>" (memory branches)
+// v0.12: NAMESPACE on LINK / UPDATE LINK / UNLINK (and BRANCH after it) and on the
+//        topic statements
 
 // ============================================================================
 // Top-level rules
@@ -143,7 +150,7 @@ forget_stmt = {
 link_stmt = {
     ^"LINK" ~ ^"FROM" ~ memory_type ~ ^"WHERE" ~ condition_list ~
     ^"TO" ~ memory_type ~ ^"WHERE" ~ condition_list ~
-    ^"TYPE" ~ string_literal ~ (^"WEIGHT" ~ float_literal)? ~ namespace_mod?
+    ^"TYPE" ~ string_literal ~ (^"WEIGHT" ~ float_literal)? ~ namespace_mod? ~ branch_mod?
 }
 
 // v0.7: change existing links in place — their weight, their type, or both. The
@@ -155,7 +162,7 @@ link_stmt = {
 update_link_stmt = {
     ^"UPDATE" ~ ^"LINK" ~ ^"FROM" ~ memory_type ~ ^"WHERE" ~ condition_list ~
     ^"TO" ~ memory_type ~ ^"WHERE" ~ condition_list ~
-    link_type_filter? ~ (link_weight_set | payload) ~ namespace_mod?
+    link_type_filter? ~ (link_weight_set | payload) ~ namespace_mod? ~ branch_mod?
 }
 
 // v0.7: remove links without touching the records at either end.
@@ -163,7 +170,7 @@ update_link_stmt = {
 unlink_stmt = {
     ^"UNLINK" ~ ^"FROM" ~ memory_type ~ ^"WHERE" ~ condition_list ~
     ^"TO" ~ memory_type ~ ^"WHERE" ~ condition_list ~
-    link_type_filter? ~ namespace_mod?
+    link_type_filter? ~ namespace_mod? ~ branch_mod?
 }
 
 // v0.10: merge a duplicate entity into another (SEMANTIC); the duplicate's key
@@ -175,7 +182,7 @@ link_type_filter = { ^"TYPE" ~ string_literal }
 link_weight_set = { ^"WEIGHT" ~ float_literal }
 
 // ============================================================================
-// Subscriptions and continuous queries (v0.6 draft)
+// Subscriptions and continuous queries (v0.6)
 // ============================================================================
 
 // SUBSCRIBE SCOPE "team:billing" KINDS fact, edge FROM NOW
@@ -284,6 +291,7 @@ modifier = {
   | min_confidence_mod
   | scope_mod
   | namespace_mod
+  | branch_mod
   | ttl_mod
   | aggregate_mod
   | group_by_mod
@@ -320,6 +328,10 @@ scope_mod = { ^"SCOPE" ~ scope_value }
 scope_value = { ^"private" | ^"shared" | ^"cluster" }
 
 namespace_mod = { ^"NAMESPACE" ~ string_literal }
+
+// v0.11: a memory branch (agents as repos). Reads see the parent as of the branch
+// point plus the branch's own writes; writes land on the branch only.
+branch_mod = { ^"BRANCH" ~ string_literal }
 
 ttl_mod = { ^"TTL" ~ duration_literal }
 

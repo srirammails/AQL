@@ -435,10 +435,11 @@ fn parse_link(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
         parse_condition_list(inner.next().ok_or(ParseError::Missing("to conditions"))?)?;
     let link_type = parse_string_literal(inner.next().ok_or(ParseError::Missing("link type"))?)?;
 
-    let (mut weight, mut namespace) = (None, None);
+    let (mut weight, mut namespace, mut branch) = (None, None, None);
     for p in inner {
         match p.as_rule() {
             Rule::namespace_mod => namespace = Some(parse_namespace_mod(p)?),
+            Rule::branch_mod => branch = Some(parse_namespace_mod(p)?),
             _ => weight = Some(parse_float(p)?),
         }
     }
@@ -451,6 +452,7 @@ fn parse_link(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
         link_type,
         weight,
         namespace,
+        branch,
     }))
 }
 
@@ -474,10 +476,11 @@ fn parse_link_type_filter(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stri
 fn parse_update_link(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
     let mut inner = pair.into_inner();
     let (from_type, from_conditions, to_type, to_conditions) = parse_link_ends(&mut inner)?;
-    let (mut link_type, mut weight, mut new_type, mut namespace) = (None, None, None, None);
+    let (mut link_type, mut weight, mut new_type, mut namespace, mut branch) = (None, None, None, None, None);
     for item in inner {
         match item.as_rule() {
             Rule::namespace_mod => namespace = Some(parse_namespace_mod(item)?),
+            Rule::branch_mod => branch = Some(parse_namespace_mod(item)?),
             Rule::link_type_filter => link_type = Some(parse_link_type_filter(item)?),
             Rule::link_weight_set => {
                 weight = Some(parse_float(item.into_inner().next().ok_or(ParseError::Missing("weight"))?)?);
@@ -502,21 +505,22 @@ fn parse_update_link(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement
     if weight.is_none() && new_type.is_none() {
         return Err(ParseError::Validation("UPDATE LINK needs a new weight or type".into()));
     }
-    Ok(Statement::UpdateLink(UpdateLinkStmt { from_type, from_conditions, to_type, to_conditions, link_type, weight, new_type, namespace }))
+    Ok(Statement::UpdateLink(UpdateLinkStmt { from_type, from_conditions, to_type, to_conditions, link_type, weight, new_type, namespace, branch }))
 }
 
 /// Parse UNLINK statement (v0.7)
 fn parse_unlink(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
     let mut inner = pair.into_inner();
     let (from_type, from_conditions, to_type, to_conditions) = parse_link_ends(&mut inner)?;
-    let (mut link_type, mut namespace) = (None, None);
+    let (mut link_type, mut namespace, mut branch) = (None, None, None);
     for p in inner {
         match p.as_rule() {
             Rule::namespace_mod => namespace = Some(parse_namespace_mod(p)?),
+            Rule::branch_mod => branch = Some(parse_namespace_mod(p)?),
             _ => link_type = Some(parse_link_type_filter(p)?),
         }
     }
-    Ok(Statement::Unlink(UnlinkStmt { from_type, from_conditions, to_type, to_conditions, link_type, namespace }))
+    Ok(Statement::Unlink(UnlinkStmt { from_type, from_conditions, to_type, to_conditions, link_type, namespace, branch }))
 }
 
 fn parse_merge(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
@@ -1041,7 +1045,7 @@ fn parse_subscribe(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> 
     }))
 }
 
-/// `NAMESPACE "<ns>"` (a `namespace_mod`): the namespace.
+/// `NAMESPACE "<ns>"` / `BRANCH "<b>"` (a `namespace_mod` / `branch_mod`): the name.
 fn parse_namespace_mod(pair: pest::iterators::Pair<Rule>) -> ParseResult<String> {
     parse_string_literal(pair.into_inner().next().ok_or(ParseError::Empty)?)
 }
@@ -1618,7 +1622,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // v0.6 draft: subscriptions and continuous queries
+    // v0.6: subscriptions and continuous queries
     // ------------------------------------------------------------------
 
     #[test]
@@ -1896,6 +1900,15 @@ mod tests {
         assert_eq!((u.link_type, u.namespace.as_deref()), (None, Some("p")));
         let Statement::Unlink(u) = parse(r#"UNLINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" TYPE "t" NAMESPACE "p""#).unwrap() else { panic!() };
         assert_eq!((u.link_type.as_deref(), u.namespace.as_deref()), (Some("t"), Some("p")));
+        // A link on a memory branch (v0.11): BRANCH after the NAMESPACE.
+        let Statement::Link(l) = parse(r#"LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" TYPE "t" NAMESPACE "p" BRANCH "b1""#).unwrap() else { panic!() };
+        assert_eq!((l.namespace.as_deref(), l.branch.as_deref()), (Some("p"), Some("b1")));
+        let Statement::Unlink(u) = parse(r#"UNLINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" NAMESPACE "p" BRANCH "b1""#).unwrap() else { panic!() };
+        assert_eq!(u.branch.as_deref(), Some("b1"));
+        let Statement::UpdateLink(u) = parse(r#"UPDATE LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" WEIGHT 0.3 NAMESPACE "p" BRANCH "b1""#).unwrap() else { panic!() };
+        assert_eq!(u.branch.as_deref(), Some("b1"));
+        // A topic is not on a branch.
+        assert!(parse(r#"SUBSCRIBE TOPIC "t" NAMESPACE "p" BRANCH "b1""#).is_err());
         let Statement::Subscribe(s) = parse(r#"SUBSCRIBE TOPIC "orders" FROM NOW NAMESPACE "p""#).unwrap() else { panic!() };
         assert_eq!(s.namespace.as_deref(), Some("p"));
         let Statement::Unsubscribe(u) = parse(r#"UNSUBSCRIBE "sub-1" NAMESPACE "p""#).unwrap() else { panic!() };

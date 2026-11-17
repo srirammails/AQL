@@ -13,6 +13,9 @@ use crate::QueryResult;
 
 /// Execute a parsed AQL statement
 pub fn execute_statement(stmt: &Statement, store: &mut MemoryStore) -> QueryResult {
+    if let Some(what) = adb_only(stmt) {
+        return QueryResult::err(&format!("{what} is not supported in the playground yet"));
+    }
     match stmt {
         Statement::Store(s) => execute_store(s, store),
         Statement::Recall(r) => execute_recall(r, store),
@@ -32,9 +35,9 @@ pub fn execute_statement(stmt: &Statement, store: &mut MemoryStore) -> QueryResu
         | Statement::Publish(_)
         | Statement::Watch(_)
         | Statement::Unwatch(_) => QueryResult::err(
-            "Subscriptions and continuous queries (AQL v0.6 draft) are not supported in the playground",
+            "Subscriptions and continuous queries (AQL v0.6) are not supported in the playground",
         ),
-        Statement::Merge(_) => QueryResult::err("MERGE ENTITY (AQL v0.10 draft) is not supported in the playground yet"),
+        Statement::Merge(_) => QueryResult::err("MERGE ENTITY (AQL v0.10) is not supported in the playground yet"),
     }
 }
 
@@ -75,7 +78,7 @@ fn execute_store(stmt: &StoreStmt, store: &mut MemoryStore) -> QueryResult {
 /// Execute RECALL statement
 fn execute_recall(stmt: &RecallStmt, store: &mut MemoryStore) -> QueryResult {
     if stmt.modifiers.group_by.is_some() || stmt.modifiers.window.is_some() {
-        return QueryResult::err("GROUP BY and WINDOW on RECALL (AQL v0.9 draft) are not supported in the playground yet");
+        return QueryResult::err("GROUP BY and WINDOW on RECALL (AQL v0.9) are not supported in the playground yet");
     }
     if let Some(e) = time_unsupported(&stmt.modifiers) {
         return e;
@@ -958,8 +961,35 @@ fn project_fields(record: &Record, fields: &[String]) -> Value {
     Value::Object(result)
 }
 
-/// History reads (AQL v0.10 draft) need versions the playground doesn't keep.
+/// What a statement names that only ADB implements: a memory branch (AQL v0.11) or a
+/// link within a NAMESPACE (v0.12).
+fn adb_only(stmt: &Statement) -> Option<&'static str> {
+    let branch = match stmt {
+        Statement::Recall(x) => x.modifiers.branch.is_some(),
+        Statement::Lookup(x) => x.modifiers.branch.is_some(),
+        Statement::Load(x) => x.modifiers.branch.is_some(),
+        Statement::Scan(x) => x.modifiers.branch.is_some(),
+        Statement::Store(x) => x.modifiers.branch.is_some(),
+        Statement::Update(x) => x.modifiers.branch.is_some(),
+        Statement::Forget(x) => x.modifiers.branch.is_some(),
+        Statement::Link(x) => x.branch.is_some(),
+        Statement::UpdateLink(x) => x.branch.is_some(),
+        Statement::Unlink(x) => x.branch.is_some(),
+        _ => false,
+    };
+    if branch {
+        return Some("BRANCH (AQL v0.11)");
+    }
+    match stmt {
+        Statement::Link(x) if x.namespace.is_some() => Some("LINK … NAMESPACE (AQL v0.12)"),
+        Statement::UpdateLink(x) if x.namespace.is_some() => Some("UPDATE LINK … NAMESPACE (AQL v0.12)"),
+        Statement::Unlink(x) if x.namespace.is_some() => Some("UNLINK … NAMESPACE (AQL v0.12)"),
+        _ => None,
+    }
+}
+
+/// History reads (AQL v0.10) need versions the playground doesn't keep.
 fn time_unsupported(mods: &Modifiers) -> Option<QueryResult> {
     (mods.as_of.is_some() || mods.valid_at.is_some() || mods.with_history)
-        .then(|| QueryResult::err("AS OF, VALID AT and WITH HISTORY (AQL v0.10 draft) are not supported in the playground yet"))
+        .then(|| QueryResult::err("AS OF, VALID AT and WITH HISTORY (AQL v0.10) are not supported in the playground yet"))
 }
