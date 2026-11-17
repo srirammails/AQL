@@ -34,7 +34,7 @@ One verb; the engine picks the access path:
 | `RECALL FROM SEMANTIC WHERE key = "person:ada"` | exact lookup by key |
 | `RECALL FROM SEMANTIC WHERE key = "org:acme" FOLLOW LINKS TYPE "works_at"` | what is linked to a record (and to its aliases, §4) |
 | `RECALL FROM EPISODIC WHERE pod = "payments" ORDER BY created_at DESC LIMIT 10` | filtered read |
-| `RECALL FROM SEMANTIC LIKE $question MIN_CONFIDENCE 0.7` | similarity (vector + words) |
+| `RECALL FROM SEMANTIC LIKE $question CONFIDENCE 0.7` | similarity (vector + words) |
 | `RECALL FROM PROCEDURAL LIKE "pod OOMKilled restart"` | the best-matching procedures |
 | `RECALL FROM TOOLS WHERE task = "bidding" LIMIT 3` | tools ranked for the task |
 | `RECALL FROM WORKING WINDOW LAST 30s` | the session's current state, newest first |
@@ -60,13 +60,13 @@ FORGET FROM <memory> [WHERE <conditions>] <modifiers>
 ## 3. LINK, UNLINK
 
 ```sql
-LINK   FROM <memory> WHERE <c> TO <memory> WHERE <c> TYPE "t" [WEIGHT 0.8] <modifiers>
-UNLINK FROM <memory> WHERE <c> TO <memory> WHERE <c> [TYPE "t"] <modifiers>
+LINK   FROM <memory> WHERE <c> INTO <memory> WHERE <c> TYPE "t" [WEIGHT 0.8] <modifiers>
+UNLINK FROM <memory> WHERE <c> INTO <memory> WHERE <c> [TYPE "t"] <modifiers>
 ```
 
 LINK on a link that exists sets its weight (create or update). A link's two ends are
 in the statement's namespace. Relationships are links: "Ada works at Acme" is
-`LINK FROM SEMANTIC WHERE key = "person:ada" TO SEMANTIC WHERE key = "org:acme" TYPE "works_at"`;
+`LINK FROM SEMANTIC WHERE key = "person:ada" INTO SEMANTIC WHERE key = "org:acme" TYPE "works_at"`;
 several links of one TYPE give several objects.
 
 ## 4. Entities known by another name (no MERGE ENTITY)
@@ -128,23 +128,40 @@ stage. The last stage may be a STORE or UPDATE (what REFLECT … THEN did).
 
 ```sql
 PUBLISH     TOPIC "orders" (order_id = "o-1", status = "paid") TTL 7d NAMESPACE "shop"
-SUBSCRIBE   TOPIC "orders" WHERE status = "paid" FROM NOW NAMESPACE "shop"
-SUBSCRIBE   RECALL FROM SEMANTIC WHERE predicate = "owns" LIMIT 20 NAMESPACE "crm" DEBOUNCE 100ms
+SUBSCRIBE   TOPIC "orders" WHERE status = "paid" NAMESPACE "shop"
+SUBSCRIBE   RECALL FROM SEMANTIC WHERE kind = "customer" LIMIT 20 NAMESPACE "crm"
 UNSUBSCRIBE "sub-7f3a"
 ```
 
 A subscription to a RECALL is a live query (what WATCH was): its result as it changes.
-Delivery and acknowledgements are the server's API, not AQL.
+A subscription starts now. Delivery, acknowledgements, resuming from a position and
+how often a live query re-runs after writes are the server's API and settings, not
+AQL.
 
 ## 8. Modifiers
 
-`NAMESPACE`, `IN SCOPE`, `LIMIT`, `ORDER BY … [ASC|DESC]`, `RETURN f, …`, `TTL`,
-`MIN_CONFIDENCE`, `AGGREGATE COUNT(*) AS n, AVG(x) AS a`, `GROUP BY`, `HAVING`,
-`WINDOW LAST n | LAST 30s | SINCE …` (anything with time), `WITH LINKS [TYPE …]`,
-`FOLLOW LINKS [TYPE …] DEPTH n`, `AS OF <time>`, `WITH HISTORY`,
-`TIMEOUT` (PIPELINE only).
+| Purpose | Modifiers |
+|---|---|
+| Whose memory | `NAMESPACE "ns"`, `IN SCOPE "s"` |
+| Result | `LIMIT n`, `ORDER BY f [ASC\|DESC]`, `RETURN f, …` |
+| Lifetime | `TTL 7d` |
+| Similarity | `CONFIDENCE 0.7` (at least) |
+| Aggregates | `AGGREGATE COUNT(*) AS n, SUM/AVG/MIN/MAX(f) AS x`, `GROUP BY f`, `HAVING <c>` |
+| Recent items | `WINDOW LAST 10` / `WINDOW LAST 30s` (anything with time) |
+| Links | `WITH LINKS [TYPE "t" \| TYPE ("a", "b")] [WEIGHT 0.5]`, `FOLLOW LINKS [same] [DEPTH n]` — both directions; `WEIGHT` here is a minimum |
+| History | `AS OF <time>`, `WITH HISTORY [BETWEEN <time> AND <time>]` |
+| Time budget | `TIMEOUT 80ms` (PIPELINE only) |
 
-Conditions: `= != < <= > >= CONTAINS STARTS_WITH ENDS_WITH IN`, `AND`, `OR`, `( )`.
+A time is a timestamp (`"2026-11-01T09:00:00Z"`) or a variable.
+
+Conditions: `= != < <= > >=`, `BETWEEN a AND b`, `IN (…)`, `CONTAINS`, `STARTS_WITH`,
+`ENDS_WITH`, `AND`, `OR`, `( )`.
+
+**Keywords (about 60):** the 13 verbs; the 6 memory types; `FROM INTO WHERE LIKE TYPE
+WEIGHT TOPIC PREFER SOURCE TARGET`; `NAMESPACE IN SCOPE LIMIT ORDER BY ASC DESC RETURN
+TTL CONFIDENCE AGGREGATE COUNT SUM AVG MIN MAX AS GROUP HAVING WINDOW LAST WITH LINKS
+FOLLOW DEPTH OF HISTORY BETWEEN TIMEOUT`; `AND OR CONTAINS STARTS_WITH ENDS_WITH true
+false null`.
 
 ## 9. What changed from 0.x
 
@@ -152,7 +169,12 @@ Conditions: `= != < <= > >= CONTAINS STARTS_WITH ENDS_WITH IN`, `AND`, `OR`, `( 
 |---|---|
 | LOOKUP, LOAD, SCAN | RECALL (§1) |
 | `KEY x = v`, `ALL` | `WHERE x = v`, no WHERE |
-| `PATTERN … THRESHOLD t` | `LIKE "text" MIN_CONFIDENCE t` |
+| `PATTERN … THRESHOLD t`, `MIN_CONFIDENCE` | `LIKE "text" CONFIDENCE t` |
+| LINK … `TO` | LINK … `INTO` (one pair of direction words) |
+| `MIN_WEIGHT`, `OUTBOUND/INBOUND/BOTH`, `TYPE IN (…)` | `WEIGHT` (a minimum), both directions, `TYPE ("a", "b")` |
+| `WINDOW TOP n BY f`, `WINDOW SINCE …` | `ORDER BY f LIMIT n`, `WHERE t BETWEEN … AND …` |
+| `AS OF 2d AGO` | `AS OF "<timestamp>"`; `WITH HISTORY BETWEEN … AND …` |
+| `DEBOUNCE`, `FROM NOW`, `FROM OFFSET n`, `KINDS` | server settings and API |
 | REFLECT … THEN | PIPELINE with a write last |
 | `STORE INTO SEMANTIC FACT [MULTI]`, `VALID AT` | no facts: relationships are LINKs, values are fields; validity, if needed, is ordinary fields |
 | UPDATE LINK | LINK (create or update) |
