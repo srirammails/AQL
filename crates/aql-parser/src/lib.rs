@@ -19,7 +19,7 @@ pub mod parser;
 // Re-exports for convenience
 pub use ast::*;
 pub use error::{ParseError, ParseResult};
-pub use parser::parse;
+pub use parser::{parse, parse_script};
 
 /// This crate's release (`0.N.x`), which parses AQL language version `v0.N`
 /// ([`LANGUAGE_VERSION`]). See `CHANGELOG.md`.

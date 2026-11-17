@@ -27,11 +27,33 @@ pub fn parse(input: &str) -> ParseResult<Statement> {
     Ok(stmt)
 }
 
+/// Parse a script: statements separated by `;`. Each `USE "ns"` gives the statements
+/// after it that name no namespace that namespace; the USE statements themselves are
+/// not returned. `default` is a session's namespace in force before the script.
+pub fn parse_script(input: &str, default: Option<&str>) -> ParseResult<Vec<Statement>> {
+    let pairs = AqlParser::parse(Rule::script, input).map_err(ParseError::from_pest)?;
+    let mut current = default.map(String::from);
+    let mut out = Vec::new();
+    for p in pairs.flat_map(|p| p.into_inner()).filter(|p| p.as_rule() == Rule::statement) {
+        let stmt = statement(p)?;
+        validate(&stmt)?;
+        match stmt {
+            Statement::Use(ns) => current = Some(ns),
+            s => out.push(match &current {
+                Some(ns) => s.with_default_namespace(ns),
+                None => s,
+            }),
+        }
+    }
+    Ok(out)
+}
+
 // ---------------------------------------------------------------- statements
 
 fn statement(pair: P) -> ParseResult<Statement> {
     let inner = pair.into_inner().next().ok_or(ParseError::Empty)?;
     Ok(match inner.as_rule() {
+        Rule::use_stmt => Statement::Use(string(first(inner)?)?),
         Rule::pipeline_stmt => Statement::Pipeline(pipeline(inner)?),
         Rule::recall_stmt => Statement::Recall(recall(inner)?),
         Rule::store_stmt => Statement::Store(store(inner)?),
@@ -316,6 +338,7 @@ fn validate(stmt: &Statement) -> ParseResult<()> {
             bad("BRANCH / FORK need two different namespaces")
         }
         Statement::Merge(m) if m.from == m.into || m.from.is_empty() || m.into.is_empty() => bad("MERGE needs two different namespaces"),
+        Statement::Use(ns) if ns.is_empty() => bad("USE names a namespace"),
         _ => Ok(()),
     }
 }
@@ -671,6 +694,27 @@ mod tests {
         assert_eq!(r.modifiers.aggregate.as_ref().map(|a| a.len()), Some(2));
         assert_eq!(r.modifiers.order_by, Some(OrderBy { field: "n".into(), ascending: false }));
         assert!(parse("RECALL FROM EPISODIC GROUP BY pod").unwrap_err().to_string().contains("AGGREGATE"));
+    }
+
+    #[test]
+    fn use_sets_the_namespace_of_what_follows() {
+        assert_eq!(ok(r#"USE "crm""#), Statement::Use("crm".into()));
+        let s = parse_script(r#"USE "crm"; RECALL FROM SEMANTIC WHERE key = "a"; STORE INTO EPISODIC (e = 1) NAMESPACE "ops"; LINK FROM SEMANTIC WHERE key = "a" INTO SEMANTIC WHERE key = "b" TYPE "t";"#, None).unwrap();
+        assert_eq!(s.len(), 3, "the USE itself isn't returned");
+        let Statement::Recall(r) = &s[0] else { panic!() };
+        assert_eq!(r.modifiers.namespace.as_deref(), Some("crm"));
+        let Statement::Store(st) = &s[1] else { panic!() };
+        assert_eq!(st.modifiers.namespace.as_deref(), Some("ops"), "a statement's own NAMESPACE wins");
+        let Statement::Link(l) = &s[2] else { panic!() };
+        assert_eq!(l.namespace.as_deref(), Some("crm"));
+        // A session's namespace before the script; a later USE changes it.
+        let s = parse_script(r#"RECALL FROM WORKING; USE "b"; RECALL FROM WORKING"#, Some("a")).unwrap();
+        let ns = |i: usize| match &s[i] { Statement::Recall(r) => r.modifiers.namespace.clone(), _ => None };
+        assert_eq!((ns(0).as_deref(), ns(1).as_deref()), (Some("a"), Some("b")));
+        // BRANCH names its own namespaces.
+        let s = parse_script(r#"USE "crm"; BRANCH FROM "crm" INTO "crm-try""#, None).unwrap();
+        assert_eq!(s[0], Statement::Branch(NamespaceStmt { from: "crm".into(), into: "crm-try".into(), as_of: None }));
+        assert!(parse("USE crm").is_err(), "a namespace is a string");
     }
 
     #[test]

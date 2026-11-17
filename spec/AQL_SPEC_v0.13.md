@@ -11,6 +11,7 @@ working on every memory type; the engine works out *how* from what is asked.
 Memory      RECALL  STORE  UPDATE  FORGET  LINK  UNLINK
 Namespaces  BRANCH  FORK  MERGE
 Flow        PIPELINE  SUBSCRIBE  UNSUBSCRIBE  PUBLISH
+Session     USE
 ```
 
 Memory types: `EPISODIC` (what happened), `SEMANTIC` (what is known: records and
@@ -18,7 +19,23 @@ the links between them), `PROCEDURAL` (how to do things), `TOOLS` (what can be u
 current session), and `ALL` for reads and FORGET.
 
 Every statement names whose memory it touches with `NAMESPACE "<ns>"` (a server may
-require it). `IN SCOPE "<scope>"` narrows to a shared group inside the namespace.
+require it), or takes it from a `USE` in force (§0). `IN SCOPE "<scope>"` narrows to a
+shared group inside the namespace.
+
+## 0. USE — name the namespace once
+
+```sql
+USE "crm";
+RECALL FROM SEMANTIC WHERE key = "person:ada";
+STORE INTO EPISODIC (event = "called");
+RECALL FROM EPISODIC WHERE pod = "x" NAMESPACE "ops"    -- its own NAMESPACE wins
+```
+
+- Statements separated by `;` form a **script** (one request). A `USE "ns"` gives every
+  later statement in it that names no namespace that one, until the next USE.
+- A **session** (a connection that keeps state: MCP, Flight) keeps its USE between
+  requests. A request without a session (plain HTTP) uses a script.
+- BRANCH, FORK and MERGE name their namespaces themselves; USE doesn't change them.
 
 ---
 

@@ -7,11 +7,16 @@
 //   Memory      RECALL  STORE  UPDATE  FORGET  LINK  UNLINK
 //   Namespaces  BRANCH  FORK  MERGE
 //   Flow        PIPELINE  SUBSCRIBE  UNSUBSCRIBE  PUBLISH
+//   Session     USE
 
-aql = { SOI ~ statement ~ EOI }
+aql = { SOI ~ statement ~ ";"? ~ EOI }
+
+// Several statements in one request, separated by ";" (a USE applies to the rest).
+script = { SOI ~ statement ~ (";" ~ statement)* ~ ";"? ~ EOI }
 
 statement = {
-    pipeline_stmt
+    use_stmt
+  | pipeline_stmt
   | recall_stmt
   | store_stmt
   | update_stmt
@@ -25,6 +30,10 @@ statement = {
   | unsubscribe_stmt
   | publish_stmt
 }
+
+// USE "crm": the namespace of the statements that follow (in the script, or the
+// session) that don't name their own.
+use_stmt = { ^"USE" ~ string_literal }
 
 // ============================================================================
 // Memory

@@ -9,6 +9,8 @@ use std::time::Duration;
 /// A complete AQL statement.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Statement {
+    /// USE "ns": the namespace of the following statements that name none
+    Use(String),
     /// PIPELINE [name] [TIMEOUT d] stage | stage | …
     Pipeline(PipelineStmt),
     /// RECALL FROM <memory> [WHERE … | LIKE …] … — every read
@@ -35,6 +37,36 @@ pub enum Statement {
     Unsubscribe(UnsubscribeStmt),
     /// PUBLISH TOPIC "t" (…) …
     Publish(PublishStmt),
+}
+
+impl Statement {
+    /// `self` with `namespace` wherever it names none (a USE in force). BRANCH, FORK,
+    /// MERGE and UNSUBSCRIBE name their own, and are unchanged.
+    pub fn with_default_namespace(mut self, namespace: &str) -> Self {
+        fn fill(slot: &mut Option<String>, ns: &str) {
+            if slot.is_none() {
+                *slot = Some(ns.to_string());
+            }
+        }
+        match &mut self {
+            Statement::Pipeline(p) => {
+                p.stages = std::mem::take(&mut p.stages).into_iter().map(|s| s.with_default_namespace(namespace)).collect();
+            }
+            Statement::Recall(r) => fill(&mut r.modifiers.namespace, namespace),
+            Statement::Store(s) => fill(&mut s.modifiers.namespace, namespace),
+            Statement::Update(u) => fill(&mut u.modifiers.namespace, namespace),
+            Statement::Forget(f) => fill(&mut f.modifiers.namespace, namespace),
+            Statement::Link(l) => fill(&mut l.namespace, namespace),
+            Statement::Unlink(u) => fill(&mut u.namespace, namespace),
+            Statement::Publish(p) => fill(&mut p.modifiers.namespace, namespace),
+            Statement::Subscribe(s) => match &mut s.target {
+                SubscribeTarget::Query(r) => fill(&mut r.modifiers.namespace, namespace),
+                SubscribeTarget::Topic(_) => fill(&mut s.namespace, namespace),
+            },
+            Statement::Use(_) | Statement::Branch(_) | Statement::Fork(_) | Statement::Merge(_) | Statement::Unsubscribe(_) => {}
+        }
+        self
+    }
 }
 
 /// Memory types.
