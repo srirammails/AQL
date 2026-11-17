@@ -180,7 +180,7 @@ fn get_tools() -> Value {
         "tools": [
             {
                 "name": "aql_query",
-                "description": "Execute an AQL (Agent Query Language) query against ClawDB. Use this for all memory operations including STORE, RECALL, SCAN, LOOKUP, LOAD, FORGET, UPDATE, LINK, REFLECT, and PIPELINE.",
+                "description": "Execute AQL v0.13 (Agent Query Language) against ClawDB: RECALL (every read), STORE, UPDATE, FORGET, LINK, UNLINK and PIPELINE. A query may be a script: statements separated by `;`, `USE \"ns\"` naming the namespace of the statements after it; the answer is the last statement's. BRANCH / FORK / MERGE, SUBSCRIBE / UNSUBSCRIBE / PUBLISH, NAMESPACE (…) lists, IN SCOPE and AS OF / WITH HISTORY need ADB.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -206,11 +206,6 @@ fn get_tools() -> Value {
                         "data": {
                             "type": "object",
                             "description": "Key-value pairs to store"
-                        },
-                        "scope": {
-                            "type": "string",
-                            "enum": ["private", "shared"],
-                            "description": "Visibility scope (optional)"
                         },
                         "namespace": {
                             "type": "string",
@@ -397,10 +392,6 @@ async fn handle_store_memory(state: &AppState, args: Option<Value>) -> ToolCallR
         .collect();
 
     let mut query = format!("STORE INTO {} ({})", memory_type, fields.join(", "));
-
-    if let Some(scope) = args.get("scope").and_then(|s| s.as_str()) {
-        query.push_str(&format!(" SCOPE {}", scope));
-    }
 
     if let Some(ns) = args.get("namespace").and_then(|n| n.as_str()) {
         query.push_str(&format!(" NAMESPACE \"{}\"", ns));

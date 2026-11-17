@@ -224,27 +224,32 @@ async fn run_repl(db: Arc<ClawDB>) -> anyhow::Result<()> {
 
 fn print_help() {
     println!(r#"
-ClawDB AQL Examples:
+ClawDB AQL v0.13 Examples:
 
   STORE:
     STORE INTO WORKING (name = "alice", score = 95)
-    STORE INTO EPISODIC (event = "login", user = "bob") SCOPE private
+    STORE INTO EPISODIC (event = "login", user = "bob") NAMESPACE "app"
 
-  RECALL:
+  RECALL (every read):
     RECALL FROM WORKING WHERE score > 80
+    RECALL FROM WORKING WINDOW LAST 10
     RECALL FROM EPISODIC ORDER BY created_at DESC LIMIT 5
-
-  SCAN:
-    SCAN FROM WORKING WINDOW LAST 10
+    RECALL FROM TOOLS WHERE task = "bidding" LIMIT 3
+    RECALL FROM PROCEDURAL LIKE "pod OOMKilled restart" CONFIDENCE 0.7
 
   AGGREGATE:
-    RECALL FROM WORKING AGGREGATE COUNT(*), AVG(score)
+    RECALL FROM WORKING AGGREGATE COUNT(*) AS n, AVG(score) AS avg_score
 
-  LINK:
-    LINK FROM WORKING WHERE name = "alice" TO EPISODIC WHERE event = "login" AS "performed"
+  LINK / UNLINK:
+    LINK FROM WORKING WHERE name = "alice" INTO EPISODIC WHERE event = "login" TYPE "performed" WEIGHT 0.9
+    RECALL FROM WORKING WHERE name = "alice" FOLLOW LINKS TYPE "performed"
+    UNLINK FROM WORKING WHERE name = "alice" INTO EPISODIC WHERE event = "login"
 
   PIPELINE:
-    PIPELINE test TIMEOUT 100ms {{ STORE INTO WORKING (x = 1) }} THEN {{ RECALL FROM WORKING }}
+    PIPELINE test TIMEOUT 100ms RECALL FROM WORKING WHERE name = "alice" | STORE INTO EPISODIC (seen = {{name}})
+
+  SCRIPT:
+    USE "app"; STORE INTO WORKING (x = 1); RECALL FROM WORKING
 
 Commands:
     stats  - Show database statistics

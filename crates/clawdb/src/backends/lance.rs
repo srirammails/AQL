@@ -198,6 +198,7 @@ impl LanceBackend {
                 ttl_ms,
             },
             embedding: None, // TODO: Extract embedding for semantic
+            links: None,
         })
     }
 
@@ -265,6 +266,9 @@ impl LanceBackend {
                         }
                         return None;
                     }
+                    // BETWEEN a AND b: the value is [a, b]. Times are compared in Rust
+                    // (record times are timestamps, the bounds strings), so no column filter.
+                    Operator::Between => return None,
                 };
 
                 Some(format!("{} {} {}", column, op_str, value_to_sql(value)))
@@ -337,6 +341,11 @@ impl LanceBackend {
 
         let mut parts = Vec::new();
 
+        // Only an AND of conditions can be pushed down piecewise
+        if conditions.iter().any(|c| c.logical_op() == Some(LogicalOp::Or)) {
+            return None;
+        }
+
         for condition in conditions {
             if let Condition::Simple { field, .. } = condition {
                 // Only include conditions on simple fields
@@ -346,7 +355,7 @@ impl LanceBackend {
                     field.as_str()
                 };
 
-                if simple_fields.contains(&base_field) {
+                if simple_fields.contains(&base_field) && !matches!(condition, Condition::Simple { operator: Operator::Between, .. }) {
                     if let Some(filter) = self.condition_to_filter(condition) {
                         parts.push(filter);
                     }
@@ -436,13 +445,6 @@ impl MemoryBackend for LanceBackend {
                     if record.metadata.is_expired() {
                         continue;
                     }
-                    // Apply SCOPE filtering from modifiers
-                    if let Some(scope) = &modifiers.scope {
-                        let scope_str = format!("{:?}", scope).to_lowercase();
-                        if record.metadata.scope != scope_str {
-                            continue;
-                        }
-                    }
                     // Apply NAMESPACE filtering from modifiers
                     if let Some(namespace) = &modifiers.namespace {
                         if record.metadata.namespace != *namespace {
@@ -516,7 +518,12 @@ impl MemoryBackend for LanceBackend {
             if let Value::Object(update_map) = &updates {
                 if let Value::Object(ref mut data_map) = record.data {
                     for (k, v) in update_map {
-                        data_map.insert(k.clone(), v.clone());
+                        // field = null removes the field
+                        if v.is_null() {
+                            data_map.remove(k);
+                        } else {
+                            data_map.insert(k.clone(), v.clone());
+                        }
                     }
                 }
             }
@@ -609,7 +616,7 @@ fn value_to_string(value: &aql_parser::Value) -> String {
 }
 
 /// Compare a JSON value against an AQL value using an operator
-fn compare_values(json_val: &Value, operator: &Operator, aql_val: &aql_parser::Value) -> bool {
+pub(crate) fn compare_values(json_val: &Value, operator: &Operator, aql_val: &aql_parser::Value) -> bool {
     let target = aql_value_to_json(aql_val);
 
     match operator {
@@ -636,10 +643,24 @@ fn compare_values(json_val: &Value, operator: &Operator, aql_val: &aql_parser::V
             if let Value::Array(arr) = &target {
                 arr.iter().any(|v| json_equals(json_val, v))
             } else {
-                false
+                json_equals(json_val, &target)
             }
         }
+        Operator::Between => match &target {
+            Value::Array(b) if b.len() == 2 => {
+                json_compare(json_val, &b[0]).is_some_and(|c| c >= 0) && json_compare(json_val, &b[1]).is_some_and(|c| c <= 0)
+            }
+            _ => false,
+        },
     }
+}
+
+/// A time string (RFC 3339, or a date) as milliseconds since the epoch.
+fn time_ms(s: &str) -> Option<i64> {
+    if let Ok(t) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(t.timestamp_millis());
+    }
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().and_then(|d| d.and_hms_opt(0, 0, 0)).map(|t| t.and_utc().timestamp_millis())
 }
 
 /// Convert AQL value to JSON value
@@ -670,7 +691,7 @@ fn json_equals(a: &Value, b: &Value) -> bool {
 }
 
 /// Compare JSON values (returns ordering as i32)
-fn json_compare(a: &Value, b: &Value) -> Option<i32> {
+pub(crate) fn json_compare(a: &Value, b: &Value) -> Option<i32> {
     match (a, b) {
         (Value::Number(a), Value::Number(b)) => {
             let af = a.as_f64()?;
@@ -678,6 +699,9 @@ fn json_compare(a: &Value, b: &Value) -> Option<i32> {
             af.partial_cmp(&bf).map(|c| c as i32)
         }
         (Value::String(a), Value::String(b)) => Some(a.cmp(b) as i32),
+        // A record time (milliseconds) with a time string
+        (Value::Number(a), Value::String(b)) => Some(a.as_i64()?.cmp(&time_ms(b)?) as i32),
+        (Value::String(a), Value::Number(b)) => Some(time_ms(a)?.cmp(&b.as_i64()?) as i32),
         _ => None,
     }
 }

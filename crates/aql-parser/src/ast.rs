@@ -168,7 +168,7 @@ pub struct LinkStmt {
     pub to_conditions: Vec<Condition>,
     pub link_type: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub weight: Option<f32>,
+    pub weight: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
 }

@@ -70,7 +70,7 @@ impl std::fmt::Display for MemoryType {
 pub struct Metadata {
     /// Namespace for isolation
     pub namespace: String,
-    /// Scope (private, shared, cluster)
+    /// Scope (`IN SCOPE`; ClawDB stores the configured default)
     pub scope: String,
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
@@ -131,6 +131,9 @@ pub struct MemoryRecord {
     /// Optional embedding vector for semantic memory
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding: Option<Vec<f32>>,
+    /// The record's links (both directions), when read WITH LINKS
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<Value>>,
 }
 
 impl MemoryRecord {
@@ -142,6 +145,7 @@ impl MemoryRecord {
             data,
             metadata: Metadata::default(),
             embedding: None,
+            links: None,
         }
     }
 
@@ -246,6 +250,8 @@ pub enum QueryData {
     Records { records: Vec<MemoryRecord>, count: usize },
     /// Count of affected records
     Affected { count: usize },
+    /// AGGREGATE: one object (null when HAVING suppresses it), or one row per group
+    Values { values: Value, count: usize },
     /// Message result
     Message { message: String },
 }

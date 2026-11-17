@@ -195,7 +195,7 @@ fn link(pair: P) -> ParseResult<LinkStmt> {
         match item.as_rule() {
             Rule::link_ends => (l.from_type, l.from_conditions, l.to_type, l.to_conditions) = ends(item)?,
             Rule::string_literal => l.link_type = string(item)?,
-            Rule::number => l.weight = Some(number(item)? as f32),
+            Rule::number => l.weight = Some(number(item)?),
             Rule::namespace_mod => l.namespace = Some(one_namespace(item)?),
             _ => {}
         }
@@ -349,8 +349,13 @@ fn validate(stmt: &Statement) -> ParseResult<()> {
 }
 
 fn aggregates(m: &Modifiers) -> ParseResult<()> {
-    if (m.having.is_some() || m.group_by.is_some()) && m.aggregate.is_none() {
-        return Err(ParseError::Validation("HAVING and GROUP BY need AGGREGATE".into()));
+    if m.aggregate.is_none() {
+        if m.having.is_some() {
+            return Err(ParseError::Validation("HAVING requires AGGREGATE".into()));
+        }
+        if m.group_by.is_some() {
+            return Err(ParseError::Validation("GROUP BY requires AGGREGATE".into()));
+        }
     }
     Ok(())
 }
@@ -668,7 +673,7 @@ mod tests {
     #[test]
     fn links() {
         let Statement::Link(l) = ok(r#"LINK FROM SEMANTIC WHERE key = "person:ada" INTO SEMANTIC WHERE key = "org:acme" TYPE "works_at" WEIGHT 0.9 NAMESPACE "crm""#) else { panic!() };
-        assert_eq!((l.link_type.as_str(), l.weight, l.namespace.as_deref()), ("works_at", Some(0.9), Some("crm")));
+        assert_eq!((l.link_type.as_str(), l.weight, l.namespace.as_deref()), ("works_at", Some(0.9), Some("crm")), "WEIGHT as written (f64, as LinkSelect's)");
         assert_eq!(l.to_type, MemoryType::Semantic);
         let Statement::Unlink(u) = ok(r#"UNLINK FROM SEMANTIC WHERE key = "a" INTO EPISODIC WHERE key = "b""#) else { panic!() };
         assert_eq!((u.to_type, u.link_type), (MemoryType::Episodic, None));
