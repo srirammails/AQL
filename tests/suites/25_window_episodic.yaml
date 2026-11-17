@@ -1,4 +1,4 @@
-# AQL v0.9 draft Test Suite - WINDOW on RECALL FROM EPISODIC
+# AQL v0.9 Test Suite - WINDOW on RECALL FROM EPISODIC
 # The window runs over the episodes in commit order, before ORDER BY / LIMIT /
 # AGGREGATE (spec/AQL_SPEC_v0.9_additions.md §2). Setup: five episodes w25, n 1..5.
 

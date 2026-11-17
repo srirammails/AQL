@@ -310,7 +310,7 @@
             <p class="subtitle">
                 Agent Query Language — In-Browser Demo (WASM) —
                 <a href="https://github.com/srirammails/AQL" target="_blank">GitHub</a> ·
-                <a href="https://github.com/srirammails/AQL/blob/main/spec/AQL_SPEC_v0.5.md" target="_blank">Spec v0.5</a>
+                <a href="https://github.com/srirammails/AQL/blob/main/CHANGELOG.md" target="_blank">AQL v0.12</a> (parses v0.12, runs the v0.5 core)
             </p>
         </header>
 
@@ -454,37 +454,37 @@
             </div>
 
             <!-- SEMANTIC examples -->
-            <div class="example-chip" data-query='RECALL FROM SEMANTIC LIKE "machine learning" LIMIT 5'>
+            <div class="example-chip" data-query='RECALL FROM SEMANTIC WHERE concept = "machine_learning" LIMIT 5'>
                 <div class="example-chip-title">SEMANTIC → ML</div>
-                <div class="example-chip-code">RECALL SEMANTIC LIKE "machine learning"</div>
+                <div class="example-chip-code">RECALL SEMANTIC WHERE concept = …</div>
             </div>
-            <div class="example-chip" data-query='RECALL FROM SEMANTIC LIKE "database"'>
+            <div class="example-chip" data-query='RECALL FROM SEMANTIC WHERE concept = "database"'>
                 <div class="example-chip-title">SEMANTIC → DB</div>
-                <div class="example-chip-code">RECALL FROM SEMANTIC LIKE "database"</div>
+                <div class="example-chip-code">RECALL FROM SEMANTIC WHERE concept = "database"</div>
             </div>
 
             <!-- LINK + FOLLOW LINKS examples -->
-            <div class="example-chip" data-query='LINK FROM WORKING WHERE name = "alice" TO EPISODIC WHERE event = "login" AS "performed" WITH WEIGHT 1.0'>
+            <div class="example-chip" data-query='LINK FROM WORKING WHERE name = "alice" TO EPISODIC WHERE event = "login" TYPE "performed" WEIGHT 1.0'>
                 <div class="example-chip-title">LINK → Create</div>
-                <div class="example-chip-code">LINK FROM ... TO ... AS "performed"</div>
+                <div class="example-chip-code">LINK FROM ... TO ... TYPE "performed"</div>
             </div>
-            <div class="example-chip" data-query='LINK FROM PROCEDURAL WHERE pattern = "retry_strategy" TO TOOLS WHERE category = "search" AS "uses_tool"'>
+            <div class="example-chip" data-query='LINK FROM PROCEDURAL WHERE pattern = "retry_strategy" TO TOOLS WHERE category = "search" TYPE "uses_tool"'>
                 <div class="example-chip-title">LINK → Proc→Tool</div>
-                <div class="example-chip-code">LINK PROCEDURAL TO TOOLS AS "uses"</div>
+                <div class="example-chip-code">LINK PROCEDURAL TO TOOLS TYPE "uses"</div>
             </div>
             <div class="example-chip" data-query='RECALL FROM WORKING WITH LINKS ALL'>
                 <div class="example-chip-title">WITH LINKS ALL</div>
                 <div class="example-chip-code">RECALL ... WITH LINKS ALL</div>
             </div>
-            <div class="example-chip" data-query='RECALL FROM WORKING WHERE name = "alice" FOLLOW LINKS "performed" DEPTH 1'>
+            <div class="example-chip" data-query='RECALL FROM WORKING WHERE name = "alice" FOLLOW LINKS TYPE "performed" DEPTH 1'>
                 <div class="example-chip-title">FOLLOW LINKS</div>
-                <div class="example-chip-code">FOLLOW LINKS "performed" DEPTH 1</div>
+                <div class="example-chip-code">FOLLOW LINKS TYPE "performed" DEPTH 1</div>
             </div>
 
             <!-- REFLECT examples -->
-            <div class="example-chip" data-query='REFLECT FROM WORKING, EPISODIC, PROCEDURAL'>
+            <div class="example-chip" data-query='REFLECT FROM WORKING, FROM EPISODIC, FROM PROCEDURAL'>
                 <div class="example-chip-title">REFLECT → Multi</div>
-                <div class="example-chip-code">REFLECT FROM WORKING, EPISODIC, PROC</div>
+                <div class="example-chip-code">REFLECT FROM WORKING, FROM EPISODIC, …</div>
             </div>
             <div class="example-chip" data-query='REFLECT FROM ALL WITH LINKS ALL'>
                 <div class="example-chip-title">REFLECT → All+Links</div>
@@ -496,15 +496,15 @@
             </div>
 
             <!-- PIPELINE examples -->
-            <div class="example-chip" data-query='PIPELINE setup TIMEOUT 100ms { STORE INTO WORKING (bid = "b1", price = 2.5) } THEN { STORE INTO WORKING (bid = "b2", price = 3.0) } THEN { RECALL FROM WORKING }'>
+            <div class="example-chip" data-query='PIPELINE setup TIMEOUT 100ms SCAN FROM WORKING WINDOW LAST 5 | RECALL FROM WORKING WHERE price > 2'>
                 <div class="example-chip-title">PIPELINE → Multi-Stage</div>
-                <div class="example-chip-code">PIPELINE setup TIMEOUT 100ms {...}</div>
+                <div class="example-chip-code">PIPELINE setup TIMEOUT 100ms … | …</div>
             </div>
-            <div class="example-chip" data-query='PIPELINE rtb_flow TIMEOUT 50ms { RECALL FROM WORKING WHERE price > 2 } THEN { RECALL FROM TOOLS WHERE task = "retrieval" }'>
+            <div class="example-chip" data-query='PIPELINE rtb_flow TIMEOUT 50ms RECALL FROM WORKING WHERE price > 2 | LOAD FROM TOOLS WHERE task = "retrieval" LIMIT 3'>
                 <div class="example-chip-title">PIPELINE → RTB</div>
                 <div class="example-chip-code">PIPELINE rtb_flow TIMEOUT 50ms</div>
             </div>
-            <div class="example-chip" data-query='PIPELINE analyze TIMEOUT 200ms { RECALL FROM EPISODIC AGGREGATE COUNT(*) AS events } THEN { RECALL FROM PROCEDURAL WHERE confidence > 0.5 }'>
+            <div class="example-chip" data-query='PIPELINE analyze TIMEOUT 200ms RECALL FROM EPISODIC AGGREGATE COUNT(*) AS events | RECALL FROM PROCEDURAL WHERE confidence > 0.5'>
                 <div class="example-chip-title">PIPELINE → Analyze</div>
                 <div class="example-chip-code">PIPELINE with AGGREGATE</div>
             </div>

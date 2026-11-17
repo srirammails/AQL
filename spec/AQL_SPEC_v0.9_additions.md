@@ -1,6 +1,6 @@
-# AQL v0.9 — Additions (draft): grouping and spec completion
+# AQL v0.9 — Additions: grouping and spec completion
 
-> **Date:** 30 Oct 2026 · @Sriram · **Status:** draft; §1–§4 implemented in the grammar,
+> **Date:** 30 Oct 2026 · @Sriram · **Status:** released in AQL 0.12.0; §1–§4 implemented in the grammar,
 > parser and ADB; conformance suites `24_group_by.yaml`, `25_window_episodic.yaml`,
 > `26_update_null.yaml`.
 > ClawDB and the WASM playground reject `GROUP BY` and `WINDOW` on `RECALL`.

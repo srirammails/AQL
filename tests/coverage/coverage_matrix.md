@@ -1,4 +1,4 @@
-# AQL v0.5 Test Coverage Matrix
+# AQL v0.12 Test Coverage Matrix
 
 This document maps grammar productions and spec sections to test IDs.
 
@@ -15,7 +15,11 @@ This document maps grammar productions and spec sections to test IDs.
 | Bug regressions (B1-B29) | 29/29 | All sections | None |
 | §16 RTB pipeline | 100% | T12-05 | Embedding path |
 | §17 Learning loop | 100% | N/A | Full workflow tested |
-| **Overall** | **~92%** | **150 tests** | Embedding-based similarity |
+| v0.5 core | ~92% | 116 tests (suites 01-17, 21) | Embedding-based similarity |
+| v0.6-v0.10 additions | per suite | 177 tests (suites 18-20, 22-29) | Deliveries over SSE / MCP (engine tests) |
+| v0.11 BRANCH | modifier, errors | 6 tests (suite 30) | Branch contents (branches are made through a server's API) |
+| v0.12 NAMESPACE | every new clause | 22 tests (suite 31) | SUBSCRIBE SCOPE … NAMESPACE (reserved) |
+| **Overall** | | **321 tests** | |
 
 ## Statement Coverage
 
@@ -236,6 +240,24 @@ This document maps grammar productions and spec sections to test IDs.
 | T21-08 | Float exact match |
 | T21-09 | Zero-value float store |
 | T21-10 | TTL 1h unit conversion |
+
+### Versions v0.6 to v0.12 (205 tests)
+
+| Suite | Version | Grammar productions | Spec |
+|-------|---------|---------------------|------|
+| 18_subscriptions (14) | v0.6 | `subscribe_stmt`, `publish_stmt`, `ack_stmt`, `unsubscribe_stmt`, `kinds_clause`, `start_clause` | v0.6 §2 |
+| 19_watch (13) | v0.6 | `watch_stmt`, `debounce_clause`, `unwatch_stmt` | v0.6 §3 |
+| 20_in_scope (15) | v0.6 | `in_scope_mod` | v0.6 §4 |
+| 22_link_update (24) | v0.7 | `update_link_stmt`, `unlink_stmt`, `link_type_filter`, `link_weight_set` | v0.7 |
+| 23_graph (34) | v0.8 | `follow_links` depth, `link_direction`, `min_weight_mod`, `TYPE IN`, `fact_mod` | v0.8 |
+| 24_group_by (13) | v0.9 | `group_by_mod` | v0.9 §1 |
+| 25_window_episodic (13) | v0.9 | `window_mod` on RECALL | v0.9 §2 |
+| 26_update_null (8) | v0.9 | `null` in UPDATE payloads | v0.9 §3 |
+| 27_time (18) | v0.10 | `as_of_mod`, `valid_at_mod`, `with_history_mod`, `valid_from` / `valid_to` | v0.10 §1-§3 |
+| 28_merge (13) | v0.10 | `merge_stmt` | v0.10 §4 |
+| 29_scoped_keys (12) | v0.10 | keys per scope (no new production) | v0.10 §5 |
+| 30_branch (6) | v0.11 | `branch_mod` | v0.11 |
+| 31_namespace_statements (22) | v0.12 | `namespace_mod` (and `branch_mod`) on `link_stmt`, `update_link_stmt`, `unlink_stmt`, `subscribe_stmt`, `ack_stmt`, `unsubscribe_stmt` | v0.12 |
 
 ## Bug Regression Coverage
 

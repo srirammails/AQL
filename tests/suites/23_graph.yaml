@@ -1,4 +1,4 @@
-# AQL v0.8 draft Test Suite - graph reads
+# AQL v0.8 Test Suite - graph reads
 # Multi-hop FOLLOW LINKS, link direction, MIN_WEIGHT, TYPE IN / ALL, and facts
 # (spec/AQL_SPEC_v0.8_additions.md). Tests run in order; the first ones create
 # the graph: g_a →next→ g_b →next→ g_c →next→ g_d, g_x →next→ g_b, g_a →knows→ g_x.

@@ -1,6 +1,6 @@
-# AQL v0.7 — Additions (draft): changing and removing links
+# AQL v0.7 — Additions: changing and removing links
 
-> **Date:** 26 Oct 2026 · @Sriram · **Status:** accepted for v0.7; grammar, parser,
+> **Date:** 26 Oct 2026 · @Sriram · **Status:** released in AQL 0.12.0 (accepted for v0.7); grammar, parser,
 > WASM playground source and ADB implemented; conformance suite `22_link_update.yaml`.
 > **Extends:** [`AQL_SPEC_v0.5.md`](AQL_SPEC_v0.5.md) and
 > [`AQL_SPEC_v0.6_additions.md`](AQL_SPEC_v0.6_additions.md). Every v0.5 / v0.6

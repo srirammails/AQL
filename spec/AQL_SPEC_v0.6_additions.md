@@ -1,7 +1,8 @@
-# AQL v0.6 — Additions (draft)
+# AQL v0.6 — Additions: subscriptions, continuous queries, named scopes
 
-> **Date:** 9 Oct 2026 · @Sriram · **Status:** accepted for v0.6 (ADB D9); grammar and
-> parser implemented, execution pending in ADB.
+> **Date:** 9 Oct 2026 · @Sriram · **Status:** released in AQL 0.12.0 (accepted for v0.6, ADB D9); grammar, parser
+> and ADB implemented; conformance suites `18_subscriptions.yaml`, `19_watch.yaml`,
+> `20_in_scope.yaml`.
 > **Extends:** [`AQL_SPEC_v0.5.md`](AQL_SPEC_v0.5.md). Everything in v0.5 is unchanged:
 > every v0.5 conformance and seed query parses to the same AST as before.
 > **Engine semantics:** ADB `SUBSCRIPTIONS_CQ_SPEC.md` and `ARCHITECTURE.md` §11.7.

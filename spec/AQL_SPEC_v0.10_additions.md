@@ -1,6 +1,6 @@
-# AQL v0.10 — Additions (draft): time
+# AQL v0.10 — Additions: time
 
-> **Date:** 30 Oct 2026 · @Sriram · **Status:** draft; implemented in the grammar,
+> **Date:** 30 Oct 2026 · @Sriram · **Status:** released in AQL 0.12.0; implemented in the grammar,
 > parser and ADB; conformance suite `27_time.yaml`. ClawDB and the WASM playground
 > reject `AS OF`, `VALID AT`, `WITH HISTORY` and `MERGE ENTITY` (suite `28_merge.yaml`);
 > keys per scope (§5): suite `29_scoped_keys.yaml`.
