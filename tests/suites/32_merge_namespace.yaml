@@ -1,0 +1,112 @@
+# AQL v0.13 Test Suite - MERGE ENTITY within a NAMESPACE
+# Both entities are the namespace's; another namespace's entities of the same keys
+# are untouched, and the merged key finds the survivor only within the namespace
+# (spec/AQL_SPEC_v0.13_additions.md). Tests run in order.
+
+suite: MERGE_NAMESPACE
+spec_section: "v0.13"
+requires: server
+total_tests: 13
+
+tests:
+  - id: T32-01
+    name: "setup: the survivor in namespace p"
+    query: |
+      STORE INTO SEMANTIC (key = "t32:ada", name = "Ada") NAMESPACE "t32-p"
+    expect:
+      success: true
+
+  - id: T32-02
+    name: "setup: a fact about the duplicate in p"
+    query: |
+      STORE INTO SEMANTIC FACT (subject = "t32:lovelace", predicate = "wrote", object = "t32:notes") NAMESPACE "t32-p"
+    expect:
+      success: true
+
+  - id: T32-03
+    name: "setup: the same keys in namespace q"
+    query: |
+      STORE INTO SEMANTIC (key = "t32:ada", name = "Ada Q") NAMESPACE "t32-q"
+    expect:
+      success: true
+
+  - id: T32-04
+    name: "setup: the duplicate's fact in q"
+    query: |
+      STORE INTO SEMANTIC FACT (subject = "t32:lovelace", predicate = "wrote", object = "t32:notes") NAMESPACE "t32-q"
+    expect:
+      success: true
+
+  - id: T32-05
+    name: "merge in p: one fact moves"
+    query: |
+      MERGE ENTITY "t32:lovelace" INTO "t32:ada" NAMESPACE "t32-p"
+    expect:
+      success: true
+      count: 1
+
+  - id: T32-06
+    name: "p: the fact is about the survivor"
+    query: |
+      RECALL FROM SEMANTIC WHERE subject = "t32:ada" NAMESPACE "t32-p"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.object": "t32:notes"}
+
+  - id: T32-07
+    name: "p: the duplicate is gone"
+    query: |
+      RECALL FROM SEMANTIC WHERE subject = "t32:lovelace" NAMESPACE "t32-p"
+    expect:
+      success: true
+      count: 0
+
+  - id: T32-08
+    name: "q: untouched"
+    query: |
+      RECALL FROM SEMANTIC WHERE subject = "t32:lovelace" NAMESPACE "t32-q"
+    expect:
+      success: true
+      count: 1
+
+  - id: T32-09
+    name: "p: LOOKUP KEY by the alias finds the survivor"
+    query: |
+      LOOKUP FROM SEMANTIC KEY id = "t32:lovelace" NAMESPACE "t32-p"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.key": "t32:ada", "data.records.0.data.aliases.0": "t32:lovelace"}
+
+  - id: T32-10
+    name: "q: the same key is q's own entity"
+    query: |
+      LOOKUP FROM SEMANTIC KEY id = "t32:lovelace" NAMESPACE "t32-q"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.key": "t32:lovelace"}
+
+  - id: T32-11
+    name: "merged again: refused"
+    query: |
+      MERGE ENTITY "t32:lovelace" INTO "t32:ada" NAMESPACE "t32-p"
+    expect:
+      success: false
+      error_contains: "already merged"
+
+  - id: T32-12
+    name: "an entity the namespace doesn't have: refused"
+    query: |
+      MERGE ENTITY "t32:nobody" INTO "t32:ada" NAMESPACE "t32-p"
+    expect:
+      success: false
+      error_contains: "no entity"
+
+  - id: T32-13
+    name: "NAMESPACE is the last clause"
+    query: |
+      MERGE ENTITY "t32:lovelace" NAMESPACE "t32-p" INTO "t32:ada"
+    expect:
+      success: false

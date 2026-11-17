@@ -1,4 +1,4 @@
-// AQL Grammar - Agent Query Language v0.12 (AQL 0.12.0)
+// AQL Grammar - Agent Query Language v0.13 (AQL 0.13.0)
 //
 // AQL encodes agentic intent rather than database mechanics.
 // Core design: AQL expresses what the agent wants. ADB handles how memory works.
@@ -13,6 +13,7 @@
 // v0.11: BRANCH "<name>" (memory branches)
 // v0.12: NAMESPACE on LINK / UPDATE LINK / UNLINK (and BRANCH after it) and on the
 //        topic statements
+// v0.13: NAMESPACE on MERGE ENTITY
 
 // ============================================================================
 // Top-level rules
@@ -176,7 +177,7 @@ unlink_stmt = {
 // v0.10: merge a duplicate entity into another (SEMANTIC); the duplicate's key
 // becomes an alias of the survivor.
 // MERGE ENTITY "person:ada-lovelace" INTO "person:ada"
-merge_stmt = { ^"MERGE" ~ ^"ENTITY" ~ string_literal ~ ^"INTO" ~ string_literal }
+merge_stmt = { ^"MERGE" ~ ^"ENTITY" ~ string_literal ~ ^"INTO" ~ string_literal ~ namespace_mod? }
 
 link_type_filter = { ^"TYPE" ~ string_literal }
 link_weight_set = { ^"WEIGHT" ~ float_literal }

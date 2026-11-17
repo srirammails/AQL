@@ -1,10 +1,10 @@
-# AQL v0.12 Conformance Test Suite
+# AQL v0.13 Conformance Test Suite
 
 This directory contains the official conformance test suite for AQL (Agent Query
-Language) v0.12, release 0.12.0: the v0.5 base and every version since.
+Language) v0.13, release 0.13.0: the v0.5 base and every version since.
 
-**321 tests in 31 suites**: 116 for the v0.5 core, 177 for v0.6–v0.10, 6 for v0.11
-and 22 for v0.12. ADB 0.12.0 passes all 321.
+**334 tests in 32 suites**: 116 for the v0.5 core, 177 for v0.6–v0.10, 6 for v0.11,
+22 for v0.12 and 13 for v0.13. ADB passes all 334.
 
 ## Purpose
 
@@ -42,7 +42,8 @@ tests/
 │   ├── 24_group_by.yaml … 26_update_null.yaml    # v0.9
 │   ├── 27_time.yaml … 29_scoped_keys.yaml        # v0.10
 │   ├── 30_branch.yaml        # v0.11 BRANCH (server only)
-│   └── 31_namespace_statements.yaml               # v0.12 NAMESPACE on links and topics (server only)
+│   ├── 31_namespace_statements.yaml               # v0.12 NAMESPACE on links and topics (server only)
+│   └── 32_merge_namespace.yaml                    # v0.13 MERGE ENTITY within a NAMESPACE (server only)
 └── coverage/
     └── coverage_matrix.md    # Grammar production → Test ID mapping
 ```
@@ -136,6 +137,7 @@ runner targets a server (`node run-tests.mjs --url http://host:port`).
 | 29_scoped_keys | 12 | v0.10: keys per scope (server only) |
 | 30_branch | 6 | v0.11: BRANCH "main", unknown branches, BRANCH needs NAMESPACE (server only) |
 | 31_namespace_statements | 22 | v0.12: LINK / UPDATE LINK / UNLINK within a NAMESPACE; a namespace's topics, ACK and UNSUBSCRIBE (server only) |
+| 32_merge_namespace | 13 | v0.13: MERGE ENTITY within a NAMESPACE; the alias found only there (server only) |
 
 ## Implementation Notes
 
@@ -145,12 +147,12 @@ A minimal AQL implementation should pass suites 01-07, 13-17, and 21 (core CRUD 
 
 ### Full Implementation
 
-A full implementation should pass all 321 tests, against a server (`--url`).
+A full implementation should pass all 334 tests, against a server (`--url`).
 
 ### The WASM playground
 
 `node run-tests.mjs` without `--url` runs the WASM build in `../pkg`, which parses
-v0.12 but executes the v0.5 core only, and skips the suites marked `requires: server`.
+v0.13 but executes the v0.5 core only, and skips the suites marked `requires: server`.
 The suites have been tightened since the playground was written: it passes 84 of the
 116 v0.5 core tests (and 115 of the 239 it runs). It is a demo; ADB is the reference
 for conformance.
@@ -168,7 +170,7 @@ version's additions are in [`../spec/`](../spec/), listed in [CHANGELOG.md](../C
 
 ## Version
 
-- **Language version**: v0.12
-- **Release**: 0.12.0 (the test suite is versioned with the language)
-- **Total tests**: 321 in 31 suites
+- **Language version**: v0.13
+- **Release**: 0.13.0 (the test suite is versioned with the language)
+- **Total tests**: 334 in 32 suites
 - **Bug regressions**: 29/29 confirmed fixed

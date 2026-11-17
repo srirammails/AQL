@@ -12,6 +12,7 @@ before, and its AST serializes to the same JSON.
 
 | Language | Release | Date | Spec | Conformance suites |
 |---|---|---|---|---|
+| v0.13 | 0.13.0 | 17 Nov 2026 | [v0.13 additions](spec/AQL_SPEC_v0.13_additions.md) | `32_merge_namespace` |
 | v0.12 | 0.12.0 | 17 Nov 2026 | [v0.12 additions](spec/AQL_SPEC_v0.12_additions.md) | `31_namespace_statements` |
 | v0.11 | (in 0.12.0) | 4 Nov 2026 | [v0.11 additions](spec/AQL_SPEC_v0.11_additions.md) | `30_branch` |
 | v0.10 | (in 0.12.0) | 30 Oct 2026 | [v0.10 additions](spec/AQL_SPEC_v0.10_additions.md) | `27_time`, `28_merge`, `29_scoped_keys` |
@@ -24,6 +25,17 @@ before, and its AST serializes to the same JSON.
 
 Versions v0.6 to v0.11 were developed on the `adb-v0.6` branch and are first
 released, with v0.12, as 0.12.0. Before 0.12.0 the crates were all at 0.1.0.
+
+## 0.13.0 — 17 Nov 2026
+
+**Language v0.13: `MERGE ENTITY` can name its namespace** — the last statement
+that couldn't.
+
+- `MERGE ENTITY "<dup>" INTO "<survivor>" NAMESPACE "<ns>"`: both entities are the
+  namespace's; the merged key is an alias within that namespace only.
+- The AST carries it as `namespace` on the `Merge` statement; absent when not given.
+
+**Conformance.** 32 suites, 334 tests (suite `32_merge_namespace`, server only).
 
 ## 0.12.0 — 17 Nov 2026
 

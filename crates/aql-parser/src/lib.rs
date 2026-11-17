@@ -27,7 +27,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The AQL language version this parser implements (`spec/AQL_SPEC_v0.5.md` and the
 /// additions up to this version).
-pub const LANGUAGE_VERSION: &str = "v0.12";
+pub const LANGUAGE_VERSION: &str = "v0.13";
 
 /// The AQL grammar (pest), for tools and LLM clients that need the language definition.
 pub const GRAMMAR: &str = include_str!("grammar/aql.pest");

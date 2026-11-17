@@ -364,6 +364,9 @@ pub struct UnlinkStmt {
 pub struct MergeStmt {
     pub from: String,
     pub into: String,
+    /// v0.13: `NAMESPACE "<ns>"`: both entities are that namespace's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
 }
 
 /// Query predicate

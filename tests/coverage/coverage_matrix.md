@@ -1,4 +1,4 @@
-# AQL v0.12 Test Coverage Matrix
+# AQL v0.13 Test Coverage Matrix
 
 This document maps grammar productions and spec sections to test IDs.
 
@@ -19,7 +19,8 @@ This document maps grammar productions and spec sections to test IDs.
 | v0.6-v0.10 additions | per suite | 177 tests (suites 18-20, 22-29) | Deliveries over SSE / MCP (engine tests) |
 | v0.11 BRANCH | modifier, errors | 6 tests (suite 30) | Branch contents (branches are made through a server's API) |
 | v0.12 NAMESPACE | every new clause | 22 tests (suite 31) | SUBSCRIBE SCOPE … NAMESPACE (reserved) |
-| **Overall** | | **321 tests** | |
+| v0.13 MERGE NAMESPACE | the new clause | 13 tests (suite 32) | — |
+| **Overall** | | **334 tests** | |
 
 ## Statement Coverage
 
@@ -241,7 +242,7 @@ This document maps grammar productions and spec sections to test IDs.
 | T21-09 | Zero-value float store |
 | T21-10 | TTL 1h unit conversion |
 
-### Versions v0.6 to v0.12 (205 tests)
+### Versions v0.6 to v0.13 (218 tests)
 
 | Suite | Version | Grammar productions | Spec |
 |-------|---------|---------------------|------|
@@ -258,6 +259,7 @@ This document maps grammar productions and spec sections to test IDs.
 | 29_scoped_keys (12) | v0.10 | keys per scope (no new production) | v0.10 §5 |
 | 30_branch (6) | v0.11 | `branch_mod` | v0.11 |
 | 31_namespace_statements (22) | v0.12 | `namespace_mod` (and `branch_mod`) on `link_stmt`, `update_link_stmt`, `unlink_stmt`, `subscribe_stmt`, `ack_stmt`, `unsubscribe_stmt` | v0.12 |
+| 32_merge_namespace (13) | v0.13 | `namespace_mod` on `merge_stmt` |
 
 ## Bug Regression Coverage
 

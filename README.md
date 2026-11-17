@@ -7,9 +7,9 @@ RECALL FROM EPISODIC WHERE outcome = "success" ORDER BY confidence DESC LIMIT 5 
 ```
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Spec](https://img.shields.io/badge/AQL-v0.12-teal.svg)](CHANGELOG.md)
-[![Release](https://img.shields.io/badge/release-0.12.0-blue.svg)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-321%20conformance-green.svg)](tests/)
+[![Spec](https://img.shields.io/badge/AQL-v0.13-teal.svg)](CHANGELOG.md)
+[![Release](https://img.shields.io/badge/release-0.13.0-blue.svg)](CHANGELOG.md)
+[![Tests](https://img.shields.io/badge/tests-334%20conformance-green.svg)](tests/)
 
 ---
 
@@ -35,7 +35,7 @@ RECALL FROM EPISODIC WHERE outcome = "success" ORDER BY confidence DESC LIMIT 5 
 **[Launch AQL Playground](https://srirammails.github.io/AQL/playground/)** — Parse and execute AQL queries instantly in your browser. No installation required.
 
 > Click example queries to execute them, or write your own. All operations run locally via WASM.
-> The playground parses AQL v0.12 and executes the v0.5 core (and v0.7 `UPDATE LINK` /
+> The playground parses AQL v0.13 and executes the v0.5 core (and v0.7 `UPDATE LINK` /
 > `UNLINK`); what only a server implements (subscriptions, `WATCH`, history reads,
 > `MERGE ENTITY`, `BRANCH`, …) is refused with an error naming its version.
 
@@ -148,13 +148,14 @@ LINK FROM SEMANTIC WHERE key = "a" TO EPISODIC WHERE key = "b" TYPE "rel" NAMESP
 ## Versions
 
 AQL has one version number: language **v0.N** is released as **0.N.x** (the crates
-here, tagged `v0.N.x`). The current version is **v0.12 (release 0.12.0)**. The base
+here, tagged `v0.N.x`). The current version is **v0.13 (release 0.13.0)**. The base
 specification is [v0.5](spec/AQL_SPEC_v0.5.md); each later version adds to it, and
 every older statement parses as before.
 
 | Version | Adds | Spec |
 |---|---|---|
 | v0.12 | `NAMESPACE` on `LINK` / `UPDATE LINK` / `UNLINK` and the topic statements | [additions](spec/AQL_SPEC_v0.12_additions.md) |
+| v0.13 | `NAMESPACE` on `MERGE ENTITY` | [additions](spec/AQL_SPEC_v0.13_additions.md) |
 | v0.11 | `BRANCH "<name>"`: memory branches | [additions](spec/AQL_SPEC_v0.11_additions.md) |
 | v0.10 | fact validity, `AS OF` / `VALID AT` / `WITH HISTORY`, `MERGE ENTITY`, keys per scope | [additions](spec/AQL_SPEC_v0.10_additions.md) |
 | v0.9 | `GROUP BY`, `WINDOW` on episodic `RECALL`, `UPDATE field = null` | [additions](spec/AQL_SPEC_v0.9_additions.md) |
@@ -164,7 +165,7 @@ every older statement parses as before.
 | v0.5 | the base: `FROM` / `INTO`, five memory types, links, pipelines, aggregates | [specification](spec/AQL_SPEC_v0.5.md) |
 
 The full history is in [CHANGELOG.md](CHANGELOG.md). In code,
-`aql_parser::LANGUAGE_VERSION` is `"v0.12"` and `aql_parser::VERSION` is `"0.12.0"`.
+`aql_parser::LANGUAGE_VERSION` is `"v0.13"` and `aql_parser::VERSION` is `"0.13.0"`.
 
 ---
 
@@ -190,10 +191,10 @@ AQL/
 │   └── pkg/                  # WASM bindings
 ├── spec/
 │   ├── AQL_SPEC_v0.5.md      # The base specification
-│   └── AQL_SPEC_v0.6_additions.md … AQL_SPEC_v0.12_additions.md  # Each later version
+│   └── AQL_SPEC_v0.6_additions.md … AQL_SPEC_v0.13_additions.md  # Each later version
 ├── tests/
 │   ├── fixtures/seed.aql     # Canonical test data
-│   ├── suites/*.yaml         # 31 suites, 321 conformance tests
+│   ├── suites/*.yaml         # 32 suites, 334 conformance tests
 │   └── coverage/             # Coverage matrix
 └── CHANGELOG.md              # Versions and releases
 ```
@@ -211,8 +212,9 @@ v0.5 core               116 tests   (suites 01-17, 21)
 v0.6-v0.10 additions    177 tests   (suites 18-20, 22-29)
 v0.11 BRANCH              6 tests   (suite 30)
 v0.12 NAMESPACE          22 tests   (suite 31)
+v0.13 MERGE NAMESPACE    13 tests   (suite 32)
 ──────────────────────────────────────────
-Total                   321 tests   (ADB 0.12.0: 321/321)
+Total                   334 tests   (ADB: 334/334)
 ```
 
 ### Running Tests
@@ -250,7 +252,7 @@ The parser crate is independent and can be used with any backend.
 
 ```toml
 [dependencies]
-aql-parser = { git = "https://github.com/srirammails/AQL", tag = "v0.12.0" }
+aql-parser = { git = "https://github.com/srirammails/AQL", tag = "v0.13.0" }
 ```
 
 ```rust
@@ -263,7 +265,7 @@ match stmt {
     }
     _ => {}
 }
-assert_eq!(aql_parser::LANGUAGE_VERSION, "v0.12");
+assert_eq!(aql_parser::LANGUAGE_VERSION, "v0.13");
 ```
 
 ### clawdb
@@ -272,7 +274,7 @@ Single-node reference implementation using LanceDB for vector storage.
 
 ```toml
 [dependencies]
-clawdb = { git = "https://github.com/srirammails/AQL", tag = "v0.12.0" }
+clawdb = { git = "https://github.com/srirammails/AQL", tag = "v0.13.0" }
 ```
 
 ```rust
@@ -323,7 +325,7 @@ wasm-pack build --target web --out-dir ../../playground/pkg
 
 ## Specification
 
-The base specification is `spec/AQL_SPEC_v0.5.md`; versions v0.6 to v0.12 add to it
+The base specification is `spec/AQL_SPEC_v0.5.md`; versions v0.6 to v0.13 add to it
 (`spec/AQL_SPEC_v0.N_additions.md`, see [Versions](#versions)). Key design principles:
 
 1. **FROM and INTO express direction explicitly** — Read uses FROM, write uses INTO
@@ -362,6 +364,6 @@ Apache 2.0 — see [LICENSE](LICENSE)
 
 ---
 
-*AQL v0.12 · release 0.12.0 · November 2026 · Formal grammar with design rationale*
+*AQL v0.13 · release 0.13.0 · November 2026 · Formal grammar with design rationale*
 
 *Sriram Reddy · The query language every AI agent has been missing.*

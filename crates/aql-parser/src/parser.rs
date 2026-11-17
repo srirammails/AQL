@@ -527,13 +527,14 @@ fn parse_merge(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
     let mut inner = pair.into_inner();
     let from = parse_string_literal(inner.next().ok_or(ParseError::Missing("entity to merge"))?)?;
     let into = parse_string_literal(inner.next().ok_or(ParseError::Missing("entity to merge into"))?)?;
+    let namespace = inner.next().map(parse_namespace_mod).transpose()?;
     if from.is_empty() || into.is_empty() {
         return Err(ParseError::Validation("MERGE needs two entity keys".into()));
     }
     if from == into {
         return Err(ParseError::Validation("MERGE needs two different entities".into()));
     }
-    Ok(Statement::Merge(MergeStmt { from, into }))
+    Ok(Statement::Merge(MergeStmt { from, into, namespace }))
 }
 
 /// Parse memory type
@@ -1937,7 +1938,13 @@ mod tests {
     #[test]
     fn test_v10_merge() {
         let s = parse(r#"MERGE ENTITY "person:ada-lovelace" INTO "person:ada""#).unwrap();
-        assert_eq!(s, Statement::Merge(MergeStmt { from: "person:ada-lovelace".into(), into: "person:ada".into() }));
+        assert_eq!(s, Statement::Merge(MergeStmt { from: "person:ada-lovelace".into(), into: "person:ada".into(), namespace: None }));
+        // v0.13: the namespace both entities are in; the AST without one is unchanged.
+        let s = parse(r#"MERGE ENTITY "a" INTO "b" NAMESPACE "crm""#).unwrap();
+        assert_eq!(s, Statement::Merge(MergeStmt { from: "a".into(), into: "b".into(), namespace: Some("crm".into()) }));
+        assert!(!serde_json::to_string(&parse(r#"MERGE ENTITY "a" INTO "b""#).unwrap()).unwrap().contains("namespace"));
+        assert!(parse(r#"MERGE ENTITY "a" NAMESPACE "crm" INTO "b""#).is_err(), "NAMESPACE is the last clause");
+        assert!(parse(r#"MERGE ENTITY "a" INTO "b" NAMESPACE "crm" BRANCH "x""#).is_err(), "no BRANCH on MERGE");
         assert!(parse(r#"merge entity "a" into "b""#).is_ok());
         assert!(parse(r#"MERGE ENTITY "a" INTO "a""#).unwrap_err().to_string().contains("two different entities"));
         assert!(parse(r#"MERGE ENTITY "" INTO "a""#).is_err());
