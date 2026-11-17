@@ -1,4 +1,4 @@
-# AQL v0.10 draft Test Suite - MERGE ENTITY
+# AQL v0.10 Test Suite - MERGE ENTITY
 # A duplicate entity's facts and links move to the survivor, its key becomes an
 # alias (spec/AQL_SPEC_v0.10_additions.md §4).
 

@@ -1,8 +1,10 @@
-# AQL v0.5 Conformance Test Suite
+# AQL v0.12 Conformance Test Suite
 
-This directory contains the official conformance test suite for AQL (Agent Query Language) v0.5.
+This directory contains the official conformance test suite for AQL (Agent Query
+Language) v0.12, release 0.12.0: the v0.5 base and every version since.
 
-**150 tests** covering all grammar productions, semantic validation rules, and edge cases.
+**321 tests in 31 suites**: 116 for the v0.5 core, 177 for v0.6–v0.10, 6 for v0.11
+and 22 for v0.12. ADB 0.12.0 passes all 321.
 
 ## Purpose
 
@@ -33,8 +35,14 @@ tests/
 │   ├── 15_scope_namespace.yaml # SCOPE/NAMESPACE tests (T15-01 to T15-05)
 │   ├── 16_dotted_fields.yaml # Dotted field path tests (T16-01 to T16-04)
 │   ├── 17_validation.yaml    # §19 validation rule tests (T17-01 to T17-08)
+│   ├── 18_subscriptions.yaml … 20_in_scope.yaml  # v0.6 (server only)
 │   ├── 21_edge_cases.yaml    # Edge case tests (T21-01 to T21-10)
-│   └── 22_link_update.yaml   # v0.7 UPDATE LINK / UNLINK / re-LINK (T22-01 to T22-24)
+│   ├── 22_link_update.yaml   # v0.7 UPDATE LINK / UNLINK / re-LINK (T22-01 to T22-24)
+│   ├── 23_graph.yaml         # v0.8 graph reads and facts
+│   ├── 24_group_by.yaml … 26_update_null.yaml    # v0.9
+│   ├── 27_time.yaml … 29_scoped_keys.yaml        # v0.10
+│   ├── 30_branch.yaml        # v0.11 BRANCH (server only)
+│   └── 31_namespace_statements.yaml               # v0.12 NAMESPACE on links and topics (server only)
 └── coverage/
     └── coverage_matrix.md    # Grammar production → Test ID mapping
 ```
@@ -119,6 +127,15 @@ runner targets a server (`node run-tests.mjs --url http://host:port`).
 | 20_in_scope | 15 | v0.6: IN SCOPE placement, isolation of reads / UPDATE / FORGET, with SCOPE shared, refusals (server only) |
 | 21_edge_cases | 10 | Boundaries, idempotency, type coercion |
 | 22_link_update | 24 | v0.7: UPDATE LINK (weight / type), UNLINK, re-LINK updates the weight |
+| 23_graph | 34 | v0.8: FOLLOW LINKS … DEPTH, direction, MIN_WEIGHT, TYPE IN, STORE … FACT |
+| 24_group_by | 13 | v0.9: GROUP BY with aggregates and HAVING |
+| 25_window_episodic | 13 | v0.9: WINDOW on RECALL FROM EPISODIC |
+| 26_update_null | 8 | v0.9: UPDATE field = null removes the field |
+| 27_time | 18 | v0.10: fact validity, AS OF, VALID AT, WITH HISTORY |
+| 28_merge | 13 | v0.10: MERGE ENTITY moves facts and links; the key becomes an alias |
+| 29_scoped_keys | 12 | v0.10: keys per scope (server only) |
+| 30_branch | 6 | v0.11: BRANCH "main", unknown branches, BRANCH needs NAMESPACE (server only) |
+| 31_namespace_statements | 22 | v0.12: LINK / UPDATE LINK / UNLINK within a NAMESPACE; a namespace's topics, ACK and UNSUBSCRIBE (server only) |
 
 ## Implementation Notes
 
@@ -128,7 +145,15 @@ A minimal AQL implementation should pass suites 01-07, 13-17, and 21 (core CRUD 
 
 ### Full Implementation
 
-A full implementation should pass all 150 tests including LINK, REFLECT, and PIPELINE.
+A full implementation should pass all 321 tests, against a server (`--url`).
+
+### The WASM playground
+
+`node run-tests.mjs` without `--url` runs the WASM build in `../pkg`, which parses
+v0.12 but executes the v0.5 core only, and skips the suites marked `requires: server`.
+The suites have been tightened since the playground was written: it passes 84 of the
+116 v0.5 core tests (and 115 of the 239 it runs). It is a demo; ADB is the reference
+for conformance.
 
 ### Known Gaps
 
@@ -138,11 +163,12 @@ The following require external dependencies and are not tested:
 
 ## Spec Reference
 
-Full specification: [AQL_SPEC_v0.5.md](../spec/AQL_SPEC_v0.5.md)
+Base specification: [AQL_SPEC_v0.5.md](../spec/AQL_SPEC_v0.5.md); each later
+version's additions are in [`../spec/`](../spec/), listed in [CHANGELOG.md](../CHANGELOG.md).
 
 ## Version
 
-- **Spec Version**: 0.5
-- **Test Suite Version**: 1.0
-- **Total Tests**: 150
-- **Bug Regressions**: 29/29 confirmed fixed
+- **Language version**: v0.12
+- **Release**: 0.12.0 (the test suite is versioned with the language)
+- **Total tests**: 321 in 31 suites
+- **Bug regressions**: 29/29 confirmed fixed

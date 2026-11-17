@@ -1,0 +1,190 @@
+# AQL v0.12 Test Suite - NAMESPACE on links and topics
+# LINK, UPDATE LINK and UNLINK stay within their NAMESPACE (both ends there); a
+# namespace's topics are its own, and its subscriptions are acked and ended only
+# within it (spec/AQL_SPEC_v0.12_additions.md). Tests run in order.
+
+suite: NAMESPACE_STATEMENTS
+spec_section: "v0.12"
+requires: server
+total_tests: 22
+
+tests:
+  - id: T31-01
+    name: "setup: a in namespace p"
+    query: |
+      STORE INTO SEMANTIC (key = "t31:a", n = 1) NAMESPACE "t31-p"
+    expect:
+      success: true
+
+  - id: T31-02
+    name: "setup: b in namespace p"
+    query: |
+      STORE INTO EPISODIC (key = "t31:b", n = 2) NAMESPACE "t31-p"
+    expect:
+      success: true
+
+  - id: T31-03
+    name: "setup: a in namespace q"
+    query: |
+      STORE INTO SEMANTIC (key = "t31:a", n = 3) NAMESPACE "t31-q"
+    expect:
+      success: true
+
+  - id: T31-04
+    name: "setup: b in namespace q"
+    query: |
+      STORE INTO EPISODIC (key = "t31:b", n = 4) NAMESPACE "t31-q"
+    expect:
+      success: true
+
+  - id: T31-05
+    name: "LINK … NAMESPACE links p's records only"
+    query: |
+      LINK FROM SEMANTIC WHERE key = "t31:a" TO EPISODIC WHERE key = "t31:b" TYPE "t31" WEIGHT 0.5 NAMESPACE "t31-p"
+    expect:
+      success: true
+      count: 1
+
+  - id: T31-06
+    name: "p's record has the link"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t31:a" WITH LINKS ALL NAMESPACE "t31-p"
+    expect:
+      success: true
+      links_count: 1
+
+  - id: T31-07
+    name: "q's record has none"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t31:a" WITH LINKS ALL NAMESPACE "t31-q"
+    expect:
+      success: true
+      links_count: 0
+
+  - id: T31-08
+    name: "UPDATE LINK … NAMESPACE q: no link there"
+    query: |
+      UPDATE LINK FROM SEMANTIC WHERE key = "t31:a" TO EPISODIC WHERE key = "t31:b" TYPE "t31" WEIGHT 0.9 NAMESPACE "t31-q"
+    expect:
+      success: true
+      count: 0
+
+  - id: T31-09
+    name: "UPDATE LINK … NAMESPACE p"
+    query: |
+      UPDATE LINK FROM SEMANTIC WHERE key = "t31:a" TO EPISODIC WHERE key = "t31:b" TYPE "t31" WEIGHT 0.9 NAMESPACE "t31-p"
+    expect:
+      success: true
+      count: 1
+
+  - id: T31-10
+    name: "the weight moved"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t31:a" WITH LINKS ALL NAMESPACE "t31-p"
+    expect:
+      success: true
+      links_contains:
+        - { link_type: "t31", weight: 0.9 }
+
+  - id: T31-11
+    name: "UNLINK … NAMESPACE p"
+    query: |
+      UNLINK FROM SEMANTIC WHERE key = "t31:a" TO EPISODIC WHERE key = "t31:b" NAMESPACE "t31-p"
+    expect:
+      success: true
+      count: 1
+
+  - id: T31-12
+    name: "LINK naming a namespace without the record fails"
+    query: |
+      LINK FROM SEMANTIC WHERE key = "t31:a" TO EPISODIC WHERE key = "t31:b" TYPE "t31" NAMESPACE "t31-r"
+    expect:
+      success: false
+
+  - id: T31-13
+    name: "SUBSCRIBE TOPIC … NAMESPACE"
+    query: |
+      SUBSCRIBE TOPIC "t31.orders" FROM NOW NAMESPACE "t31-p"
+    expect:
+      success: true
+      fields:
+        data.type: "subscription"
+    capture:
+      psub: data.subscription
+
+  - id: T31-14
+    name: "PUBLISH TOPIC … NAMESPACE: the namespace's topic"
+    query: |
+      PUBLISH TOPIC "t31.orders" (n = 1) NAMESPACE "t31-p"
+    expect:
+      success: true
+      fields:
+        data.topic: "t31-p/t31.orders"
+    capture:
+      poff: data.offset
+
+  - id: T31-15
+    name: "PUBLISH without NAMESPACE: the org-wide topic"
+    query: |
+      PUBLISH TOPIC "t31.orders" (n = 2)
+    expect:
+      success: true
+      fields:
+        data.topic: "t31.orders"
+
+  - id: T31-16
+    name: "ACK within another namespace: not found"
+    query: |
+      ACK "${psub}" OFFSET ${poff} NAMESPACE "t31-q"
+    expect:
+      success: false
+      error_contains: "not found"
+
+  - id: T31-17
+    name: "ACK within its namespace"
+    query: |
+      ACK "${psub}" OFFSET ${poff} NAMESPACE "t31-p"
+    expect:
+      success: true
+      fields:
+        data.subscription: "${psub}"
+      fields_exist: [data.cursor]
+
+  - id: T31-18
+    name: "UNSUBSCRIBE within another namespace: not ended"
+    query: |
+      UNSUBSCRIBE "${psub}" NAMESPACE "t31-q"
+    expect:
+      success: true
+      fields:
+        data.unsubscribed: false
+
+  - id: T31-19
+    name: "UNSUBSCRIBE within its namespace"
+    query: |
+      UNSUBSCRIBE "${psub}" NAMESPACE "t31-p"
+    expect:
+      success: true
+      fields:
+        data.unsubscribed: true
+
+  - id: T31-20
+    name: "SUBSCRIBE SCOPE … NAMESPACE is not supported"
+    query: |
+      SUBSCRIBE SCOPE "agent:1" NAMESPACE "t31-p"
+    expect:
+      success: false
+
+  - id: T31-21
+    name: "a topic is not on a branch"
+    query: |
+      SUBSCRIBE TOPIC "t31.orders" NAMESPACE "t31-p" BRANCH "b1"
+    expect:
+      success: false
+
+  - id: T31-22
+    name: "NAMESPACE goes last"
+    query: |
+      ACK "x" NAMESPACE "t31-p" OFFSET 1
+    expect:
+      success: false

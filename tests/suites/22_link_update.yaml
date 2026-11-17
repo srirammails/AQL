@@ -1,4 +1,4 @@
-# AQL v0.7 draft Test Suite - §22 UPDATE LINK / UNLINK
+# AQL v0.7 Test Suite - §22 UPDATE LINK / UNLINK
 # Changing and removing existing links (spec/AQL_SPEC_v0.7_additions.md), and LINK
 # between the same records with the same type updating the weight instead of
 # adding a parallel link. Tests run in order; the first ones create their records.

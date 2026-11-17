@@ -1,6 +1,6 @@
-# AQL v0.8 — Additions (draft): graph reads and facts
+# AQL v0.8 — Additions: graph reads and facts
 
-> **Date:** 29 Oct 2026 · @Sriram · **Status:** accepted for v0.8; grammar, parser
+> **Date:** 29 Oct 2026 · @Sriram · **Status:** released in AQL 0.12.0 (accepted for v0.8); grammar, parser
 > and ADB implemented (ADB `.ai/P1_GRAPH.md`); conformance suite `23_graph.yaml`.
 > The WASM playground parses v0.8 but ignores direction and `MIN_WEIGHT`.
 > **Extends:** [`AQL_SPEC_v0.5.md`](AQL_SPEC_v0.5.md),

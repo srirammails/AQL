@@ -1,4 +1,4 @@
-# AQL v0.10 draft Test Suite - Keys per scope
+# AQL v0.10 Test Suite - Keys per scope
 # A key is unique per (scope, memory type); a record in a named scope has the id
 # <scope>~<key> (spec/AQL_SPEC_v0.10_additions.md §5).
 

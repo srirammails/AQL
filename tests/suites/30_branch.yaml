@@ -1,0 +1,56 @@
+# AQL v0.11 Test Suite - BRANCH "<name>"
+# A statement names the memory branch it reads and writes (spec/AQL_SPEC_v0.11_additions.md).
+# Branches are created and merged through the server's API, not AQL: these tests
+# need no branch to exist. BRANCH "main" is the namespace itself.
+
+suite: BRANCH
+spec_section: "v0.11"
+requires: server
+total_tests: 6
+
+tests:
+  - id: T30-01
+    name: "setup: a record in a namespace"
+    query: |
+      STORE INTO SEMANTIC (key = "t30:a", n = 1) NAMESPACE "t30-space"
+    expect:
+      success: true
+
+  - id: T30-02
+    name: "BRANCH \"main\" reads the namespace itself"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t30:a" NAMESPACE "t30-space" BRANCH "main"
+    expect:
+      success: true
+      count: 1
+
+  - id: T30-03
+    name: "a branch that doesn't exist is an error"
+    query: |
+      RECALL FROM SEMANTIC ALL NAMESPACE "t30-space" BRANCH "t30-missing"
+    expect:
+      success: false
+      error_contains: "no branch"
+
+  - id: T30-04
+    name: "BRANCH needs the NAMESPACE it belongs to"
+    query: |
+      STORE INTO SEMANTIC (key = "t30:b", n = 2) BRANCH "t30-b1"
+    expect:
+      success: false
+      error_contains: "NAMESPACE"
+
+  - id: T30-05
+    name: "a LINK names its branch after its NAMESPACE (v0.12)"
+    query: |
+      LINK FROM SEMANTIC WHERE key = "t30:a" TO SEMANTIC WHERE key = "t30:a" TYPE "self" NAMESPACE "t30-space" BRANCH "t30-missing"
+    expect:
+      success: false
+      error_contains: "no branch"
+
+  - id: T30-06
+    name: "BRANCH is a string"
+    query: |
+      RECALL FROM SEMANTIC ALL NAMESPACE "t30-space" BRANCH t30
+    expect:
+      success: false

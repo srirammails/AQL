@@ -78,12 +78,20 @@ pub struct SubscribeStmt {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<Vec<Condition>>,
     pub start: StartPosition,
+    /// v0.12: `NAMESPACE "<ns>"`: the statement stays within one namespace (its
+    /// records, or its topic and subscriptions).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
 }
 
 /// UNSUBSCRIBE statement (v0.6)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UnsubscribeStmt {
     pub subscription: String,
+    /// v0.12: `NAMESPACE "<ns>"`: the statement stays within one namespace (its
+    /// records, or its topic and subscriptions).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
 }
 
 /// ACK statement (v0.6)
@@ -91,6 +99,10 @@ pub struct UnsubscribeStmt {
 pub struct AckStmt {
     pub subscription: String,
     pub offset: u64,
+    /// v0.12: `NAMESPACE "<ns>"`: the statement stays within one namespace (its
+    /// records, or its topic and subscriptions).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
 }
 
 /// PUBLISH statement (v0.6): a committed write of kind = event to a topic
@@ -292,6 +304,14 @@ pub struct LinkStmt {
     pub link_type: String,
     /// Link weight
     pub weight: Option<f32>,
+    /// v0.12: `NAMESPACE "<ns>"`: the statement stays within one namespace (its
+    /// records, or its topic and subscriptions).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    /// v0.12: `BRANCH "<name>"` after the NAMESPACE: the memory branch the link is on
+    /// (v0.11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 /// UPDATE LINK statement (v0.7): change the weight and/or type of the existing
@@ -308,6 +328,14 @@ pub struct UpdateLinkStmt {
     pub weight: Option<f32>,
     /// New link type
     pub new_type: Option<String>,
+    /// v0.12: `NAMESPACE "<ns>"`: the statement stays within one namespace (its
+    /// records, or its topic and subscriptions).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    /// v0.12: `BRANCH "<name>"` after the NAMESPACE: the memory branch the link is on
+    /// (v0.11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 /// UNLINK statement (v0.7): remove the links between the matched records (of
@@ -320,6 +348,14 @@ pub struct UnlinkStmt {
     pub to_conditions: Vec<Condition>,
     /// Only links of this type (all types when `None`)
     pub link_type: Option<String>,
+    /// v0.12: `NAMESPACE "<ns>"`: the statement stays within one namespace (its
+    /// records, or its topic and subscriptions).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    /// v0.12: `BRANCH "<name>"` after the NAMESPACE: the memory branch the link is on
+    /// (v0.11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 /// MERGE statement (v0.10): SEMANTIC entity `from` merges into `into`: its facts
@@ -552,6 +588,9 @@ pub struct Modifiers {
     /// NAMESPACE "name"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
+    /// BRANCH "name" (v0.11): the memory branch the statement reads and writes
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
     /// TTL duration
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttl: Option<Duration>,

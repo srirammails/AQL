@@ -1,4 +1,4 @@
-# AQL v0.9 draft Test Suite - removing a field with UPDATE
+# AQL v0.9 Test Suite - removing a field with UPDATE
 # `field = null` in UPDATE removes the field (spec/AQL_SPEC_v0.9_additions.md §3), on a
 # superseding type (SEMANTIC) and a patched one (EPISODIC).
 

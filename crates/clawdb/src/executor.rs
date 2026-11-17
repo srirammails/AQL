@@ -84,6 +84,9 @@ impl Executor {
         links: &Arc<RwLock<LinksStorage>>,
         variables: &HashMap<String, Value>,
     ) -> ClawResult<QueryData> {
+        if let Some(what) = adb_only(stmt) {
+            return Err(ClawError::InvalidQuery(format!("{what} is not supported by ClawDB; ADB implements it")));
+        }
         match stmt {
             Statement::Store(s) => self.execute_store(s, backends, variables).await,
             Statement::Recall(r) => self.execute_recall(r, backends, links, variables).await,
@@ -101,12 +104,12 @@ impl Executor {
             | Statement::Publish(_)
             | Statement::Watch(_)
             | Statement::Unwatch(_) => Err(ClawError::InvalidQuery(
-                "subscriptions and continuous queries (AQL v0.6 draft) are not supported by ClawDB yet".into(),
+                "subscriptions and continuous queries (AQL v0.6) are not supported by ClawDB yet".into(),
             )),
             Statement::UpdateLink(_) | Statement::Unlink(_) => Err(ClawError::InvalidQuery(
-                "UPDATE LINK / UNLINK (AQL v0.7 draft) are not supported by ClawDB; ADB implements them".into(),
+                "UPDATE LINK / UNLINK (AQL v0.7) are not supported by ClawDB; ADB implements them".into(),
             )),
-            Statement::Merge(_) => Err(ClawError::InvalidQuery("MERGE ENTITY (AQL v0.10 draft) is not supported by ClawDB; ADB implements it".into())),
+            Statement::Merge(_) => Err(ClawError::InvalidQuery("MERGE ENTITY (AQL v0.10) is not supported by ClawDB; ADB implements it".into())),
         }
     }
 
@@ -169,7 +172,7 @@ impl Executor {
         variables: &HashMap<String, Value>,
     ) -> ClawResult<QueryData> {
         if stmt.modifiers.group_by.is_some() || stmt.modifiers.window.is_some() {
-            return Err(ClawError::InvalidQuery("GROUP BY and WINDOW on RECALL (AQL v0.9 draft) are not supported by ClawDB; ADB implements them".into()));
+            return Err(ClawError::InvalidQuery("GROUP BY and WINDOW on RECALL (AQL v0.9) are not supported by ClawDB; ADB implements them".into()));
         }
         check_time(&stmt.modifiers)?;
         // Handle FROM ALL
@@ -814,10 +817,37 @@ fn compare_json_values(a: &Option<Value>, b: &Option<Value>) -> std::cmp::Orderi
     }
 }
 
-/// History reads (AQL v0.10 draft) need versions ClawDB doesn't keep.
+/// What a statement names that only ADB implements: a memory branch (AQL v0.11) or a
+/// link within a NAMESPACE (v0.12).
+fn adb_only(stmt: &Statement) -> Option<&'static str> {
+    let branch = match stmt {
+        Statement::Recall(x) => x.modifiers.branch.is_some(),
+        Statement::Lookup(x) => x.modifiers.branch.is_some(),
+        Statement::Load(x) => x.modifiers.branch.is_some(),
+        Statement::Scan(x) => x.modifiers.branch.is_some(),
+        Statement::Store(x) => x.modifiers.branch.is_some(),
+        Statement::Update(x) => x.modifiers.branch.is_some(),
+        Statement::Forget(x) => x.modifiers.branch.is_some(),
+        Statement::Link(x) => x.branch.is_some(),
+        Statement::UpdateLink(x) => x.branch.is_some(),
+        Statement::Unlink(x) => x.branch.is_some(),
+        _ => false,
+    };
+    if branch {
+        return Some("BRANCH (AQL v0.11)");
+    }
+    match stmt {
+        Statement::Link(x) if x.namespace.is_some() => Some("LINK … NAMESPACE (AQL v0.12)"),
+        Statement::UpdateLink(x) if x.namespace.is_some() => Some("UPDATE LINK … NAMESPACE (AQL v0.12)"),
+        Statement::Unlink(x) if x.namespace.is_some() => Some("UNLINK … NAMESPACE (AQL v0.12)"),
+        _ => None,
+    }
+}
+
+/// History reads (AQL v0.10) need versions ClawDB doesn't keep.
 fn check_time(mods: &aql_parser::Modifiers) -> ClawResult<()> {
     if mods.as_of.is_some() || mods.valid_at.is_some() || mods.with_history {
-        return Err(ClawError::InvalidQuery("AS OF, VALID AT and WITH HISTORY (AQL v0.10 draft) are not supported by ClawDB; ADB implements them".into()));
+        return Err(ClawError::InvalidQuery("AS OF, VALID AT and WITH HISTORY (AQL v0.10) are not supported by ClawDB; ADB implements them".into()));
     }
     Ok(())
 }
