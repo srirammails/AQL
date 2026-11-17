@@ -143,7 +143,7 @@ forget_stmt = {
 link_stmt = {
     ^"LINK" ~ ^"FROM" ~ memory_type ~ ^"WHERE" ~ condition_list ~
     ^"TO" ~ memory_type ~ ^"WHERE" ~ condition_list ~
-    ^"TYPE" ~ string_literal ~ (^"WEIGHT" ~ float_literal)?
+    ^"TYPE" ~ string_literal ~ (^"WEIGHT" ~ float_literal)? ~ namespace_mod?
 }
 
 // v0.7: change existing links in place — their weight, their type, or both. The
@@ -155,7 +155,7 @@ link_stmt = {
 update_link_stmt = {
     ^"UPDATE" ~ ^"LINK" ~ ^"FROM" ~ memory_type ~ ^"WHERE" ~ condition_list ~
     ^"TO" ~ memory_type ~ ^"WHERE" ~ condition_list ~
-    link_type_filter? ~ (link_weight_set | payload)
+    link_type_filter? ~ (link_weight_set | payload) ~ namespace_mod?
 }
 
 // v0.7: remove links without touching the records at either end.
@@ -163,7 +163,7 @@ update_link_stmt = {
 unlink_stmt = {
     ^"UNLINK" ~ ^"FROM" ~ memory_type ~ ^"WHERE" ~ condition_list ~
     ^"TO" ~ memory_type ~ ^"WHERE" ~ condition_list ~
-    link_type_filter?
+    link_type_filter? ~ namespace_mod?
 }
 
 // v0.10: merge a duplicate entity into another (SEMANTIC); the duplicate's key
@@ -181,7 +181,7 @@ link_weight_set = { ^"WEIGHT" ~ float_literal }
 // SUBSCRIBE SCOPE "team:billing" KINDS fact, edge FROM NOW
 // SUBSCRIBE TOPIC "orders.events" WHERE status = "paid" FROM OFFSET 1042
 subscribe_stmt = {
-    ^"SUBSCRIBE" ~ subscribe_target ~ kinds_clause? ~ where_pred? ~ start_clause?
+    ^"SUBSCRIBE" ~ subscribe_target ~ kinds_clause? ~ where_pred? ~ start_clause? ~ namespace_mod?
 }
 
 subscribe_target = { scope_target | topic_target }
@@ -198,10 +198,10 @@ from_now = { ^"NOW" }
 from_offset = { ^"OFFSET" ~ integer_literal }
 
 // UNSUBSCRIBE "sub-7f3a"
-unsubscribe_stmt = { ^"UNSUBSCRIBE" ~ handle }
+unsubscribe_stmt = { ^"UNSUBSCRIBE" ~ handle ~ namespace_mod? }
 
 // ACK "sub-7f3a" OFFSET 1042
-ack_stmt = { ^"ACK" ~ handle ~ ^"OFFSET" ~ integer_literal }
+ack_stmt = { ^"ACK" ~ handle ~ ^"OFFSET" ~ integer_literal ~ namespace_mod? }
 
 // PUBLISH TOPIC "orders.events" (order_id = "o-1", status = "paid") TTL 7d
 publish_stmt = { ^"PUBLISH" ~ topic_target ~ payload ~ modifier* }
