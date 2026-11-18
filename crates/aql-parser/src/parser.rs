@@ -31,21 +31,50 @@ pub fn parse(input: &str) -> ParseResult<Statement> {
 /// after it that name no namespace that namespace; the USE statements themselves are
 /// not returned. `default` is a session's namespace in force before the script.
 pub fn parse_script(input: &str, default: Option<&str>) -> ParseResult<Vec<Statement>> {
+    Ok(script_steps(input, default)?.into_iter().map(|(_, s)| s).collect())
+}
+
+/// [`parse_script`], each statement with its 1-based position in the script as
+/// written (USE statements count), for errors that name it (`statement 3: …`).
+pub fn script_steps(input: &str, default: Option<&str>) -> ParseResult<Vec<(usize, Statement)>> {
     let pairs = AqlParser::parse(Rule::script, input).map_err(ParseError::from_pest)?;
     let mut current = default.map(String::from);
     let mut out = Vec::new();
-    for p in pairs.flat_map(|p| p.into_inner()).filter(|p| p.as_rule() == Rule::statement) {
-        let stmt = statement(p)?;
-        validate(&stmt)?;
+    for (i, p) in pairs.flat_map(|p| p.into_inner()).filter(|p| p.as_rule() == Rule::statement).enumerate() {
+        let stmt = statement(p).and_then(|s| validate(&s).map(|_| s)).map_err(|e| ParseError::Validation(format!("statement {}: {e}", i + 1)))?;
         match stmt {
             Statement::Use(ns) => current = Some(ns),
-            s => out.push(match &current {
-                Some(ns) => s.with_default_namespace(ns),
-                None => s,
-            }),
+            s => out.push((
+                i + 1,
+                match &current {
+                    Some(ns) => s.with_default_namespace(ns),
+                    None => s,
+                },
+            )),
         }
     }
     Ok(out)
+}
+
+/// Whether `input` is a script: more than one statement, or a USE.
+pub fn is_script(input: &str) -> bool {
+    let t = input.trim_start();
+    if t.len() >= 3 && t[..3].eq_ignore_ascii_case("USE") && t[3..].starts_with(|c: char| c.is_whitespace()) {
+        return true;
+    }
+    // A `;` outside a string (and not the last character).
+    let (mut in_str, mut escaped) = (false, false);
+    let body = input.trim_end().trim_end_matches(';');
+    for c in body.chars() {
+        match (in_str, escaped, c) {
+            (true, true, _) => escaped = false,
+            (true, false, '\\') => escaped = true,
+            (_, false, '"') => in_str = !in_str,
+            (false, _, ';') => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 // ---------------------------------------------------------------- statements
@@ -747,6 +776,10 @@ mod tests {
         let s = parse_script(r#"USE "crm"; BRANCH FROM "crm" INTO "crm-try""#, None).unwrap();
         assert_eq!(s[0], Statement::Branch(NamespaceStmt { from: "crm".into(), into: "crm-try".into(), as_of: None }));
         assert!(parse("USE crm").is_err(), "a namespace is a string");
+        let steps = script_steps(r#"USE "a"; RECALL FROM WORKING; STORE INTO WORKING (x = 1)"#, None).unwrap();
+        assert_eq!(steps.iter().map(|(i, _)| *i).collect::<Vec<_>>(), [2, 3], "positions as written");
+        assert!(is_script(r#"USE "a""#) && is_script("RECALL FROM WORKING; RECALL FROM WORKING"));
+        assert!(!is_script(r#"RECALL FROM WORKING WHERE a = "x;y";"#) && !is_script("RECALL FROM WORKING"));
     }
 
     #[test]
