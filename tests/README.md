@@ -1,10 +1,16 @@
-# AQL v0.12 Conformance Test Suite
+# AQL v0.13 Conformance Test Suite
 
 This directory contains the official conformance test suite for AQL (Agent Query
-Language) v0.12, release 0.12.0: the v0.5 base and every version since.
+Language) v0.13, release 0.13.0: the 13-verb language of
+[AQL_SPEC_v0.13.md](../spec/AQL_SPEC_v0.13.md), which replaces v0.5 and the
+v0.6–v0.12 additions.
 
-**321 tests in 31 suites**: 116 for the v0.5 core, 177 for v0.6–v0.10, 6 for v0.11
-and 22 for v0.12. ADB 0.12.0 passes all 321.
+**406 tests in 34 suites**: 246 that run on any implementation and 160 that need a
+server (`requires: server`). The suites were rewritten from the v0.5–v0.12 syntax
+(LOOKUP / LOAD / SCAN → RECALL, LINK … TO → INTO, facts → links and fields,
+MERGE ENTITY → aliases, WATCH → SUBSCRIBE RECALL, REFLECT → PIPELINE, …); each
+suite's header says what changed and which tests were removed because v0.13 has
+no equivalent. Suite 33 (BRANCH / FORK / MERGE on namespaces) is new.
 
 ## Purpose
 
@@ -18,31 +24,40 @@ tests/
 ├── fixtures/
 │   └── seed.aql              # Canonical seed data - run BEFORE any test suite
 ├── suites/
-│   ├── 01_scan.yaml          # SCAN tests (T01-01 to T01-05)
-│   ├── 02_recall.yaml        # RECALL tests (T02-01 to T02-20)
-│   ├── 03_lookup.yaml        # LOOKUP tests (T03-01 to T03-05)
-│   ├── 04_load.yaml          # LOAD tests (T04-01 to T04-02)
-│   ├── 05_store.yaml         # STORE tests (T05-01 to T05-08)
-│   ├── 06_update.yaml        # UPDATE tests (T06-01 to T06-10)
-│   ├── 07_forget.yaml        # FORGET tests (T07-01 to T07-06)
-│   ├── 08_link.yaml          # LINK tests (T08-01 to T08-06)
-│   ├── 09_with_links.yaml    # WITH LINKS tests (T09-01 to T09-02)
-│   ├── 10_follow_links.yaml  # FOLLOW LINKS tests (T10-01 to T10-02)
-│   ├── 11_reflect.yaml       # REFLECT tests (T11-01 to T11-04)
-│   ├── 12_pipeline.yaml      # PIPELINE tests (T12-01 to T12-05)
-│   ├── 13_aggregate.yaml     # AGGREGATE tests (T13-01 to T13-10)
-│   ├── 14_having.yaml        # HAVING tests (T14-01 to T14-04)
-│   ├── 15_scope_namespace.yaml # SCOPE/NAMESPACE tests (T15-01 to T15-05)
-│   ├── 16_dotted_fields.yaml # Dotted field path tests (T16-01 to T16-04)
-│   ├── 17_validation.yaml    # §19 validation rule tests (T17-01 to T17-08)
-│   ├── 18_subscriptions.yaml … 20_in_scope.yaml  # v0.6 (server only)
-│   ├── 21_edge_cases.yaml    # Edge case tests (T21-01 to T21-10)
-│   ├── 22_link_update.yaml   # v0.7 UPDATE LINK / UNLINK / re-LINK (T22-01 to T22-24)
-│   ├── 23_graph.yaml         # v0.8 graph reads and facts
-│   ├── 24_group_by.yaml … 26_update_null.yaml    # v0.9
-│   ├── 27_time.yaml … 29_scoped_keys.yaml        # v0.10
-│   ├── 30_branch.yaml        # v0.11 BRANCH (server only)
-│   └── 31_namespace_statements.yaml               # v0.12 NAMESPACE on links and topics (server only)
+│   ├── 01_scan.yaml          # RECALL FROM WORKING, WINDOW, ORDER BY … LIMIT (was SCAN)
+│   ├── 02_recall.yaml        # RECALL: comparators, AND/OR, ORDER BY, LIMIT, FROM ALL
+│   ├── 03_lookup.yaml        # RECALL by key (was LOOKUP)
+│   ├── 04_load.yaml          # RECALL FROM TOOLS (was LOAD)
+│   ├── 05_store.yaml         # STORE
+│   ├── 06_update.yaml        # UPDATE
+│   ├── 07_forget.yaml        # FORGET
+│   ├── 08_link.yaml          # LINK … INTO …
+│   ├── 09_with_links.yaml    # WITH LINKS
+│   ├── 10_follow_links.yaml  # FOLLOW LINKS
+│   ├── 11_reflect.yaml       # multi-source PIPELINE, write last (was REFLECT)
+│   ├── 12_pipeline.yaml      # PIPELINE, TIMEOUT
+│   ├── 13_aggregate.yaml     # AGGREGATE
+│   ├── 14_having.yaml        # HAVING
+│   ├── 15_scope_namespace.yaml # NAMESPACE isolation
+│   ├── 16_dotted_fields.yaml # metadata.* paths
+│   ├── 17_validation.yaml    # refusals, including the replaced v0.5–v0.12 forms
+│   ├── 18_subscriptions.yaml # SUBSCRIBE TOPIC / PUBLISH / UNSUBSCRIBE (server only)
+│   ├── 19_watch.yaml         # live queries: SUBSCRIBE RECALL … (server only)
+│   ├── 20_in_scope.yaml      # IN SCOPE (server only)
+│   ├── 21_edge_cases.yaml    # edge cases
+│   ├── 22_link_update.yaml   # LINK create-or-update, UNLINK, WEIGHT minimum
+│   ├── 23_graph.yaml         # FOLLOW LINKS DEPTH, both directions, relationships as links
+│   ├── 24_group_by.yaml      # GROUP BY
+│   ├── 25_window_episodic.yaml # WINDOW on EPISODIC
+│   ├── 26_update_null.yaml   # UPDATE field = null
+│   ├── 27_time.yaml          # AS OF "<time>", WITH HISTORY [BETWEEN]
+│   ├── 28_merge.yaml         # aliases (UPDATE aliases + FORGET; was MERGE ENTITY)
+│   ├── 29_scoped_keys.yaml   # keys per scope (server only)
+│   ├── 30_branch.yaml        # pointer: the BRANCH "b" modifier is gone (server only)
+│   ├── 31_namespace_statements.yaml # NAMESPACE on links, topics, live queries (server only)
+│   ├── 32_merge_namespace.yaml      # aliases within a NAMESPACE (server only)
+│   ├── 33_branch_fork_merge.yaml    # BRANCH / FORK / MERGE on namespaces (server only)
+│   └── 34_use_and_namespaces.yaml   # USE, scripts, NAMESPACE ("a", "b") (server only)
 └── coverage/
     └── coverage_matrix.md    # Grammar production → Test ID mapping
 ```
@@ -97,45 +112,49 @@ tests:
 | `fields_exist` | Dotted paths that must be present |
 
 A test may also `capture: {name: path}` a value from its result (a subscription or
-watch id, an offset) for later queries and `fields` as `${name}`. A suite with
-`requires: server` uses engine-only statements (v0.6) and is skipped unless the
-runner targets a server (`node run-tests.mjs --url http://host:port`).
+live-query id, a record's `_recorded_at` time) for later queries and `fields` as
+`${name}`. A suite with `requires: server` uses engine-only statements
+(subscriptions, scopes, branches) and is skipped unless the runner targets a
+server (`node run-tests.mjs --url http://host:port`).
 
 ## Test Categories
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|
-| 01_scan | 5 | WINDOW LAST N, duration, TOP BY, SINCE |
+| 01_scan | 5 | RECALL FROM WORKING: WINDOW LAST n / duration, ORDER BY … LIMIT, BETWEEN on time, WINDOW on EPISODIC |
 | 02_recall | 20 | All comparators, AND/OR, ORDER BY, LIMIT, FROM ALL |
-| 03_lookup | 5 | KEY, WHERE, validation errors |
-| 04_load | 2 | TOOLS ranking, validation |
-| 05_store | 8 | All memory types, TTL, SCOPE, NAMESPACE |
+| 03_lookup | 4 | RECALL … WHERE x = v on SEMANTIC, PROCEDURAL, WORKING |
+| 04_load | 2 | RECALL FROM TOOLS: ranking, task |
+| 05_store | 8 | All memory types, TTL, NAMESPACE, STORE INTO ALL refused |
 | 06_update | 10 | Additive fields, version increment, TTL race |
-| 07_forget | 6 | All types, idempotency, FROM ALL WHERE |
-| 08_link | 6 | Cross-type edges, error handling |
+| 07_forget | 4 | WORKING / EPISODIC, idempotency, FROM ALL WHERE |
+| 08_link | 6 | LINK … INTO across types, error handling |
 | 09_with_links | 2 | Links payload in responses |
 | 10_follow_links | 2 | Single-hop traversal |
-| 11_reflect | 4 | Multi-source, FROM ALL, THEN clause |
-| 12_pipeline | 5 | Named/anonymous, TIMEOUT, {var} binding |
+| 11_reflect | 4 | Multi-source PIPELINE, RECALL FROM ALL, STORE / UPDATE as the last stage |
+| 12_pipeline | 6 | Named/anonymous, TIMEOUT (PIPELINE only), {var} binding |
 | 13_aggregate | 10 | COUNT, SUM, AVG, MIN, MAX on all types |
 | 14_having | 4 | Alias resolution, suppress, multi-alias |
-| 15_scope_namespace | 5 | Isolation tests |
-| 16_dotted_fields | 4 | metadata.namespace, metadata.scope, metadata.version |
-| 17_validation | 8 | All §19 semantic rules |
-| 18_subscriptions | 14 | v0.6: SUBSCRIBE (TOPIC / SCOPE, KINDS, WHERE, FROM), PUBLISH, ACK, UNSUBSCRIBE (server only) |
-| 19_watch | 13 | v0.6: WATCH snapshots (RECALL / LOOKUP / SCAN, ORDER BY, aggregate), DEBOUNCE range, read-only, UNWATCH (server only) |
-| 20_in_scope | 15 | v0.6: IN SCOPE placement, isolation of reads / UPDATE / FORGET, with SCOPE shared, refusals (server only) |
+| 15_scope_namespace | 3 | NAMESPACE isolation |
+| 16_dotted_fields | 3 | metadata.namespace, metadata.version |
+| 17_validation | 13 | ALL on writes / links, FORGET without WHERE names its NAMESPACE, TIMEOUT optional, the replaced v0.5–v0.12 forms refused |
+| 18_subscriptions | 9 | SUBSCRIBE TOPIC [WHERE], PUBLISH, UNSUBSCRIBE (server only) |
+| 19_watch | 11 | SUBSCRIBE RECALL snapshots (key, ORDER BY, aggregate, WORKING), reads only, UNSUBSCRIBE (server only) |
+| 20_in_scope | 15 | IN SCOPE placement, isolation of reads / UPDATE / FORGET, refusals (server only) |
 | 21_edge_cases | 10 | Boundaries, idempotency, type coercion |
-| 22_link_update | 24 | v0.7: UPDATE LINK (weight / type), UNLINK, re-LINK updates the weight |
-| 23_graph | 34 | v0.8: FOLLOW LINKS … DEPTH, direction, MIN_WEIGHT, TYPE IN, STORE … FACT |
-| 24_group_by | 13 | v0.9: GROUP BY with aggregates and HAVING |
-| 25_window_episodic | 13 | v0.9: WINDOW on RECALL FROM EPISODIC |
-| 26_update_null | 8 | v0.9: UPDATE field = null removes the field |
-| 27_time | 18 | v0.10: fact validity, AS OF, VALID AT, WITH HISTORY |
-| 28_merge | 13 | v0.10: MERGE ENTITY moves facts and links; the key becomes an alias |
-| 29_scoped_keys | 12 | v0.10: keys per scope (server only) |
-| 30_branch | 6 | v0.11: BRANCH "main", unknown branches, BRANCH needs NAMESPACE (server only) |
-| 31_namespace_statements | 22 | v0.12: LINK / UPDATE LINK / UNLINK within a NAMESPACE; a namespace's topics, ACK and UNSUBSCRIBE (server only) |
+| 22_link_update | 24 | LINK sets the weight, retype by UNLINK + LINK, UNLINK, WEIGHT minimum, both ends |
+| 23_graph | 39 | FOLLOW LINKS … DEPTH in both directions, WEIGHT, TYPE ("a", "b"), relationships as LINKs, values as fields |
+| 24_group_by | 13 | GROUP BY with aggregates and HAVING |
+| 25_window_episodic | 13 | WINDOW on RECALL FROM EPISODIC; WINDOW TOP / SINCE refused |
+| 26_update_null | 8 | UPDATE field = null removes the field |
+| 27_time | 17 | UPDATE history, AS OF "<time>", WITH HISTORY [BETWEEN], validity as fields |
+| 28_merge | 16 | Aliases: read and LINK by alias, links to / from the alias reach the survivor |
+| 29_scoped_keys | 11 | Keys per scope (server only) |
+| 30_branch | 1 | The BRANCH "b" modifier is refused (server only) |
+| 31_namespace_statements | 19 | LINK / UNLINK within a NAMESPACE; a namespace's topics, live queries, UNSUBSCRIBE (server only) |
+| 32_merge_namespace | 16 | Aliases within a NAMESPACE (server only) |
+| 33_branch_fork_merge | 65 | BRANCH [AS OF], FORK [AS OF], MERGE both ways, conflicts, PREFER SOURCE / TARGET, dropping (server only) |
+| 34_use_and_namespaces | 13 | USE in a script, a statement's own NAMESPACE wins, a failing statement stops the script, reads across namespaces (server only) |
 
 ## Implementation Notes
 
@@ -145,30 +164,31 @@ A minimal AQL implementation should pass suites 01-07, 13-17, and 21 (core CRUD 
 
 ### Full Implementation
 
-A full implementation should pass all 321 tests, against a server (`--url`).
+A full implementation should pass all 406 tests, against a server (`--url`).
 
 ### The WASM playground
 
 `node run-tests.mjs` without `--url` runs the WASM build in `../pkg`, which parses
-v0.12 but executes the v0.5 core only, and skips the suites marked `requires: server`.
-The suites have been tightened since the playground was written: it passes 84 of the
-116 v0.5 core tests (and 115 of the 239 it runs). It is a demo; ADB is the reference
-for conformance.
+the v0.5–v0.12 syntax, not v0.13, and skips the suites marked `requires: server`.
+Until it is rebuilt on the v0.13 parser it fails most of these suites. It is a
+demo; ADB is the reference for conformance.
 
 ### Known Gaps
 
 The following require external dependencies and are not tested:
-- `LIKE $embedding` - requires vector encoder
-- `PATTERN $embedding` - requires vector encoder
+- `LIKE "text" | $embedding … CONFIDENCE t` - requires a vector encoder
+- Delivery of subscription events and live-query diffs (SSE / MCP) - the engine's tests
 
 ## Spec Reference
 
-Base specification: [AQL_SPEC_v0.5.md](../spec/AQL_SPEC_v0.5.md); each later
-version's additions are in [`../spec/`](../spec/), listed in [CHANGELOG.md](../CHANGELOG.md).
+Specification: [AQL_SPEC_v0.13.md](../spec/AQL_SPEC_v0.13.md) (§9 lists what changed
+from v0.12). The earlier v0.5 base and v0.6–v0.12 additions are in
+[`../spec/`](../spec/) for history, listed in [CHANGELOG.md](../CHANGELOG.md).
 
 ## Version
 
-- **Language version**: v0.12
-- **Release**: 0.12.0 (the test suite is versioned with the language)
-- **Total tests**: 321 in 31 suites
-- **Bug regressions**: 29/29 confirmed fixed
+- **Language version**: v0.13
+- **Release**: 0.13.0 (the test suite is versioned with the language)
+- **Total tests**: 406 in 34 suites
+- **Bug regressions**: B2–B29 kept where the statement still exists (B10, the SCOPE
+  private|shared modifier, was removed with it)

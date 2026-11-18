@@ -65,7 +65,9 @@ export function init() {
 }
 
 /**
- * Parse an AQL query and return AST as JSON (for debugging)
+ * Parse an AQL query (a statement or a script) and return the AST as JSON (for
+ * debugging): one statement, or an array for a script of several. USE statements are
+ * applied to the statements after them.
  * @param {string} query
  * @returns {string}
  */

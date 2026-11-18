@@ -1,10 +1,19 @@
-# AQL v0.10 Test Suite - MERGE ENTITY
-# A duplicate entity's facts and links move to the survivor, its key becomes an
-# alias (spec/AQL_SPEC_v0.10_additions.md §4).
+# AQL v0.13 Test Suite - entities known by another name (aliases)
+# spec/AQL_SPEC_v0.13.md §4: two keys name one thing → UPDATE the survivor's
+# aliases, then FORGET the duplicate. A read by an alias, a LINK naming one, and
+# links stored to or from an alias all reach the survivor; nothing is rewritten.
+# Tests run in order.
+# From v0.10 §4: MERGE ENTITY "dup" INTO "survivor" → UPDATE … (aliases = [...]) +
+# FORGET; facts about / pointing at the duplicate → LINKs of TYPE wrote / knows;
+# LOOKUP KEY id = alias → RECALL WHERE key = alias; a fact stored with the alias →
+# a LINK naming the alias. Removed: "the alias can't be stored as an entity" (not in
+# v0.13), "MERGE needs two different entities" and "MERGE needs the duplicate to
+# exist" (no MERGE ENTITY). Added: setups for the linked records, the separate
+# FORGET, WITH LINKS on the survivor, MERGE ENTITY refused.
 
-suite: MERGE
-spec_section: "v0.10"
-total_tests: 13
+suite: ALIASES
+spec_section: "v0.13"
+total_tests: 16
 
 tests:
   - id: T28-01
@@ -15,97 +24,125 @@ tests:
       success: true
 
   - id: T28-02
-    name: "setup: a fact about the duplicate"
+    name: "setup: the duplicate"
     query: |
-      STORE INTO SEMANTIC FACT (subject = "t28:lovelace", predicate = "wrote", object = "t28:notes")
+      STORE INTO SEMANTIC (key = "t28:lovelace", name = "Ada Lovelace")
     expect:
       success: true
 
   - id: T28-03
-    name: "setup: a fact pointing at the duplicate"
+    name: "setup: notes"
     query: |
-      STORE INTO SEMANTIC FACT (subject = "t28:bob", predicate = "knows", object = "t28:lovelace")
+      STORE INTO SEMANTIC (key = "t28:notes", name = "Notes")
     expect:
       success: true
 
   - id: T28-04
-    name: "merge: two facts move"
+    name: "setup: bob"
     query: |
-      MERGE ENTITY "t28:lovelace" INTO "t28:ada"
+      STORE INTO SEMANTIC (key = "t28:bob", name = "Bob")
     expect:
       success: true
-      count: 2
 
   - id: T28-05
-    name: "the facts are about the survivor"
+    name: "setup: a link from the duplicate"
     query: |
-      RECALL FROM SEMANTIC WHERE subject = "t28:ada"
+      LINK FROM SEMANTIC WHERE key = "t28:lovelace" INTO SEMANTIC WHERE key = "t28:notes" TYPE "wrote"
     expect:
       success: true
       count: 1
-      fields: {"data.records.0.data.object": "t28:notes"}
 
   - id: T28-06
-    name: "a fact's object moves too"
+    name: "setup: a link to the duplicate"
     query: |
-      RECALL FROM SEMANTIC WHERE subject = "t28:bob" AND predicate = "knows"
+      LINK FROM SEMANTIC WHERE key = "t28:bob" INTO SEMANTIC WHERE key = "t28:lovelace" TYPE "knows"
     expect:
       success: true
       count: 1
-      fields: {"data.records.0.data.object": "t28:ada"}
 
   - id: T28-07
-    name: "the duplicate is gone"
+    name: "the duplicate's key becomes an alias of the survivor (was MERGE ENTITY)"
     query: |
-      RECALL FROM SEMANTIC WHERE subject = "t28:lovelace"
+      UPDATE INTO SEMANTIC WHERE key = "t28:ada" (aliases = ["t28:lovelace"])
+    expect:
+      success: true
+      count: 1
+
+  - id: T28-08
+    name: "FORGET the duplicate's own record"
+    query: |
+      FORGET FROM SEMANTIC WHERE key = "t28:lovelace"
+    expect:
+      success: true
+      count: 1
+
+  - id: T28-09
+    name: "a read by the alias finds the survivor"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t28:lovelace"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.key": "t28:ada", "data.records.0.data.aliases.0": "t28:lovelace"}
+
+  - id: T28-10
+    name: "the duplicate's record is gone"
+    query: |
+      RECALL FROM SEMANTIC WHERE name = "Ada Lovelace"
     expect:
       success: true
       count: 0
 
-  - id: T28-08
-    name: "LOOKUP KEY by the alias finds the survivor"
-    query: |
-      LOOKUP FROM SEMANTIC KEY id = "t28:lovelace"
-    expect:
-      success: true
-      count: 1
-      fields: {"data.records.0.id": "t28:ada", "data.records.0.data.aliases.0": "t28:lovelace"}
-
-  - id: T28-09
-    name: "a fact stored with the alias is about the survivor"
-    query: |
-      STORE INTO SEMANTIC FACT (subject = "t28:lovelace", predicate = "age", value = 36)
-    expect:
-      success: true
-
-  - id: T28-09b
-    name: "... and recalled as such"
-    query: |
-      RECALL FROM SEMANTIC WHERE subject = "t28:ada" AND predicate = "age"
-    expect:
-      success: true
-      count: 1
-
-  - id: T28-10
-    name: "the alias can't be stored as an entity"
-    query: |
-      STORE INTO SEMANTIC (key = "t28:lovelace", name = "again")
-    expect:
-      success: false
-      error_contains: "was merged into t28:ada"
-
   - id: T28-11
-    name: "MERGE needs two different entities"
+    name: "a link from the alias reaches the survivor"
     query: |
-      MERGE ENTITY "t28:ada" INTO "t28:ada"
+      RECALL FROM SEMANTIC WHERE key = "t28:ada" FOLLOW LINKS TYPE "wrote"
     expect:
-      success: false
-      error_contains: "two different entities"
+      success: true
+      count: 1
+      contains:
+        - key: "t28:notes"
 
   - id: T28-12
-    name: "MERGE needs the duplicate to exist"
+    name: "a link to the alias reaches the survivor"
     query: |
-      MERGE ENTITY "t28:nobody" INTO "t28:ada"
+      RECALL FROM SEMANTIC WHERE key = "t28:bob" FOLLOW LINKS TYPE "knows"
+    expect:
+      success: true
+      count: 1
+      contains:
+        - key: "t28:ada"
+
+  - id: T28-13
+    name: "a LINK naming the alias"
+    query: |
+      LINK FROM SEMANTIC WHERE key = "t28:lovelace" INTO SEMANTIC WHERE key = "t28:bob" TYPE "met"
+    expect:
+      success: true
+      count: 1
+
+  - id: T28-14
+    name: "... is the survivor's link"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t28:ada" FOLLOW LINKS TYPE "met"
+    expect:
+      success: true
+      count: 1
+      contains:
+        - key: "t28:bob"
+
+  - id: T28-15
+    name: "the survivor carries every link that names it or its alias"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t28:ada" WITH LINKS
+    expect:
+      success: true
+      count: 1
+      links_count: 3
+
+  - id: T28-16
+    name: "MERGE ENTITY is refused"
+    query: |
+      MERGE ENTITY "t28:bob" INTO "t28:ada"
     expect:
       success: false
-      error_contains: "no entity t28:nobody"

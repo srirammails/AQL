@@ -1,31 +1,37 @@
-# AQL v0.6 Test Suite - Continuous queries (WATCH / UNWATCH)
-# spec/AQL_SPEC_v0.6_additions.md §3. The registration answer is the snapshot
-# {cq_id, offset, result}; diffs go over the engine's transports (SSE / MCP).
+# AQL v0.13 Test Suite - Live queries (SUBSCRIBE RECALL … / UNSUBSCRIBE)
+# spec/AQL_SPEC_v0.13.md §7: a subscription to a RECALL is a live query, its result
+# as it changes. The registration answer is the snapshot {cq_id, offset, result};
+# diffs go over the engine's transports (SSE / MCP).
+# From v0.6 §3: WATCH <read> → SUBSCRIBE RECALL …; WATCH LOOKUP … KEY id = →
+# SUBSCRIBE RECALL … WHERE key =; WATCH SCAN → SUBSCRIBE RECALL FROM WORKING;
+# ALL predicate dropped; UNWATCH → UNSUBSCRIBE (data.unsubscribed). Removed, no
+# v0.13 equivalent in AQL (how often a live query re-runs is a server setting):
+# DEBOUNCE and FROM NOW (old T19-08, T19-09 tested the DEBOUNCE range).
 
-suite: WATCH
-spec_section: "v0.6 §3"
+suite: LIVE_QUERIES
+spec_section: "v0.13"
 requires: server
-total_tests: 13
+total_tests: 11
 
 tests:
   - id: T19-01
-    name: "setup: a scoped fact"
+    name: "setup: a scoped record"
     query: |
       STORE INTO SEMANTIC (key = "cw-1", topic = "cw", n = 1) IN SCOPE "team:conf-watch"
     expect:
       success: true
 
   - id: T19-02
-    name: "setup: a second scoped fact"
+    name: "setup: a second scoped record"
     query: |
       STORE INTO SEMANTIC (key = "cw-2", topic = "cw", n = 2) IN SCOPE "team:conf-watch"
     expect:
       success: true
 
   - id: T19-03
-    name: "WATCH RECALL returns the snapshot"
+    name: "SUBSCRIBE RECALL returns the snapshot"
     query: |
-      WATCH RECALL FROM SEMANTIC IN SCOPE "team:conf-watch" ALL DEBOUNCE 100ms FROM NOW
+      SUBSCRIBE RECALL FROM SEMANTIC IN SCOPE "team:conf-watch"
     expect:
       success: true
       fields:
@@ -36,9 +42,9 @@ tests:
       cq: data.cq_id
 
   - id: T19-04
-    name: "WATCH LOOKUP by key"
+    name: "SUBSCRIBE RECALL by key"
     query: |
-      WATCH LOOKUP FROM SEMANTIC IN SCOPE "team:conf-watch" KEY id = "cw-1"
+      SUBSCRIBE RECALL FROM SEMANTIC IN SCOPE "team:conf-watch" WHERE key = "cw-1"
     expect:
       success: true
       fields:
@@ -46,9 +52,9 @@ tests:
         data.result.data.count: 1
 
   - id: T19-05
-    name: "WATCH with ORDER BY and LIMIT"
+    name: "SUBSCRIBE RECALL with ORDER BY and LIMIT"
     query: |
-      WATCH RECALL FROM SEMANTIC IN SCOPE "team:conf-watch" WHERE topic = "cw" ORDER BY n DESC LIMIT 1
+      SUBSCRIBE RECALL FROM SEMANTIC IN SCOPE "team:conf-watch" WHERE topic = "cw" ORDER BY n DESC LIMIT 1
     expect:
       success: true
       fields:
@@ -56,68 +62,52 @@ tests:
         data.result.data.records.0.id: "team:conf-watch~cw-2"
 
   - id: T19-06
-    name: "WATCH an aggregate"
+    name: "SUBSCRIBE to an aggregate"
     query: |
-      WATCH RECALL FROM SEMANTIC IN SCOPE "team:conf-watch" ALL AGGREGATE COUNT(*) AS c
+      SUBSCRIBE RECALL FROM SEMANTIC IN SCOPE "team:conf-watch" AGGREGATE COUNT(*) AS c
     expect:
       success: true
       fields:
         data.result.data.values.c: 2
 
   - id: T19-07
-    name: "WATCH SCAN"
+    name: "SUBSCRIBE RECALL FROM WORKING WINDOW (was WATCH SCAN)"
     query: |
-      WATCH SCAN FROM WORKING WINDOW LAST 10
+      SUBSCRIBE RECALL FROM WORKING WINDOW LAST 10
     expect:
       success: true
       fields:
         data.type: "snapshot"
 
   - id: T19-08
-    name: "DEBOUNCE below 50ms is refused"
+    name: "only reads are live queries: a write is a parse error"
     query: |
-      WATCH RECALL FROM SEMANTIC ALL DEBOUNCE 5ms
-    expect:
-      success: false
-      error_contains: "DEBOUNCE"
-
-  - id: T19-09
-    name: "DEBOUNCE above 500ms is refused"
-    query: |
-      WATCH RECALL FROM SEMANTIC ALL DEBOUNCE 600ms
-    expect:
-      success: false
-      error_contains: "DEBOUNCE"
-
-  - id: T19-10
-    name: "only reads can be watched: a write is a parse error"
-    query: |
-      WATCH STORE INTO SEMANTIC (a = 1)
+      SUBSCRIBE STORE INTO SEMANTIC (a = 1)
     expect:
       success: false
       error_contains: "parse"
 
-  - id: T19-11
-    name: "PIPELINE can't be watched"
+  - id: T19-09
+    name: "a PIPELINE can't be subscribed to"
     query: |
-      WATCH PIPELINE p TIMEOUT 100ms RECALL FROM SEMANTIC ALL
+      SUBSCRIBE PIPELINE p TIMEOUT 100ms RECALL FROM SEMANTIC
     expect:
       success: false
 
-  - id: T19-12
-    name: "UNWATCH stops the watch"
+  - id: T19-10
+    name: "UNSUBSCRIBE stops the live query"
     query: |
-      UNWATCH "${cq}"
+      UNSUBSCRIBE "${cq}"
     expect:
       success: true
       fields:
-        data.unwatched: true
+        data.unsubscribed: true
 
-  - id: T19-13
-    name: "UNWATCH again: nothing to stop"
+  - id: T19-11
+    name: "UNSUBSCRIBE again: nothing to stop"
     query: |
-      UNWATCH "${cq}"
+      UNSUBSCRIBE "${cq}"
     expect:
       success: true
       fields:
-        data.unwatched: false
+        data.unsubscribed: false

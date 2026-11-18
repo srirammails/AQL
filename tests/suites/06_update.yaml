@@ -1,9 +1,10 @@
-# AQL v0.5 Test Suite - §06 UPDATE INTO
+# AQL v0.13 Test Suite - §06 UPDATE INTO
 # UPDATE covers all types, PROCEDURAL typed fields,
 # version increment, TTL race condition, and non-existent records.
+# spec/AQL_SPEC_v0.13.md §2. Unchanged from v0.5 (§7): UPDATE kept its form.
 
 suite: UPDATE
-spec_section: "§7"
+spec_section: "v0.13"
 total_tests: 10
 bug_refs: [B21, B22, B23, B24, B25, B26]
 

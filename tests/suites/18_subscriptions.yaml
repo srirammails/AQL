@@ -1,23 +1,27 @@
-# AQL v0.6 Test Suite - Subscriptions (SUBSCRIBE / PUBLISH / ACK / UNSUBSCRIBE)
-# spec/AQL_SPEC_v0.6_additions.md §2. Statement-level behaviour only: deliveries
-# go over the engine's transports (SSE / MCP), which the engine's own tests cover.
-# Tests run in order; ${sub} and ${pub} are captured from earlier results.
+# AQL v0.13 Test Suite - Subscriptions (SUBSCRIBE TOPIC / PUBLISH / UNSUBSCRIBE)
+# spec/AQL_SPEC_v0.13.md §7. Statement-level behaviour only: deliveries go over the
+# engine's transports (SSE / MCP), which the engine's own tests cover. A
+# subscription starts now. Tests run in order; ${sub} is captured from T18-01.
+# From v0.6 §2: FROM NOW / FROM OFFSET dropped from SUBSCRIBE (start_offset is no
+# longer expected). Removed, no v0.13 equivalent in AQL (acknowledgements, resuming
+# and record kinds are the server's API): ACK (old T18-03, T18-04, T18-13),
+# SUBSCRIBE SCOPE "…" KINDS … (old T18-06), KINDS parse error (old T18-08).
 
 suite: SUBSCRIPTIONS
-spec_section: "v0.6 §2"
+spec_section: "v0.13"
 requires: server
-total_tests: 14
+total_tests: 9
 
 tests:
   - id: T18-01
-    name: "SUBSCRIBE TOPIC … FROM NOW returns a handle and a start offset"
+    name: "SUBSCRIBE TOPIC returns a handle"
     query: |
-      SUBSCRIBE TOPIC "conf.orders" FROM NOW
+      SUBSCRIBE TOPIC "conf.orders"
     expect:
       success: true
       fields:
         data.type: "subscription"
-      fields_exist: [data.subscription, data.start_offset]
+      fields_exist: [data.subscription]
     capture:
       sub: data.subscription
 
@@ -30,61 +34,26 @@ tests:
       fields:
         data.topic: "conf.orders"
       fields_exist: [data.id, data.offset]
-    capture:
-      pub: data.offset
 
   - id: T18-03
-    name: "ACK moves the cursor to the acknowledged offset"
+    name: "SUBSCRIBE TOPIC with WHERE"
     query: |
-      ACK "${sub}" OFFSET ${pub}
-    expect:
-      success: true
-      fields:
-        data.subscription: "${sub}"
-
-  - id: T18-04
-    name: "ACK an unknown subscription fails"
-    query: |
-      ACK "sub-does-not-exist" OFFSET 1
-    expect:
-      success: false
-      error_contains: "not found"
-
-  - id: T18-05
-    name: "SUBSCRIBE TOPIC with WHERE and FROM OFFSET"
-    query: |
-      SUBSCRIBE TOPIC "conf.orders" WHERE status = "paid" FROM OFFSET 1
+      SUBSCRIBE TOPIC "conf.orders" WHERE status = "paid"
     expect:
       success: true
       fields:
         data.type: "subscription"
-        data.start_offset: 1
-
-  - id: T18-06
-    name: "SUBSCRIBE SCOPE with KINDS"
-    query: |
-      SUBSCRIBE SCOPE "team:conf" KINDS fact, edge FROM NOW
-    expect:
-      success: true
       fields_exist: [data.subscription]
 
-  - id: T18-07
-    name: "SUBSCRIBE without a start clause (FROM NOW is the default)"
+  - id: T18-04
+    name: "SUBSCRIBE to a second topic"
     query: |
       SUBSCRIBE TOPIC "conf.other"
     expect:
       success: true
-      fields_exist: [data.subscription, data.start_offset]
+      fields_exist: [data.subscription]
 
-  - id: T18-08
-    name: "an unknown record kind is a parse error"
-    query: |
-      SUBSCRIBE TOPIC "conf.orders" KINDS widget
-    expect:
-      success: false
-      error_contains: "parse"
-
-  - id: T18-09
+  - id: T18-05
     name: "PUBLISH needs a payload"
     query: |
       PUBLISH TOPIC "conf.orders"
@@ -92,7 +61,7 @@ tests:
       success: false
       error_contains: "parse"
 
-  - id: T18-10
+  - id: T18-06
     name: "PUBLISH to a second topic"
     query: |
       PUBLISH TOPIC "conf.other" (n = 1)
@@ -101,7 +70,7 @@ tests:
       fields:
         data.topic: "conf.other"
 
-  - id: T18-11
+  - id: T18-07
     name: "UNSUBSCRIBE stops the subscription"
     query: |
       UNSUBSCRIBE "${sub}"
@@ -110,7 +79,7 @@ tests:
       fields:
         data.unsubscribed: true
 
-  - id: T18-12
+  - id: T18-08
     name: "UNSUBSCRIBE again: nothing to stop"
     query: |
       UNSUBSCRIBE "${sub}"
@@ -119,18 +88,10 @@ tests:
       fields:
         data.unsubscribed: false
 
-  - id: T18-13
-    name: "ACK after UNSUBSCRIBE fails"
-    query: |
-      ACK "${sub}" OFFSET ${pub}
-    expect:
-      success: false
-      error_contains: "not found"
-
-  - id: T18-14
+  - id: T18-09
     name: "keywords are case-insensitive"
     query: |
-      subscribe topic "conf.orders" from now
+      subscribe topic "conf.orders"
     expect:
       success: true
       fields_exist: [data.subscription]

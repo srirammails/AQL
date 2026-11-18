@@ -376,18 +376,18 @@
         <h1><span class="accent">AQL</span> — Agent Query Language</h1>
 
         <p>
-            <span class="badge badge-blue">AQL v0.12</span>
-            <span class="badge badge-green">321 Tests</span>
+            <span class="badge badge-blue">AQL v0.13</span>
+            <span class="badge badge-green">406 Tests</span>
             <span class="badge badge-purple">Apache 2.0</span>
         </p>
 
-        <p>A declarative query language for agent memory systems. AQL enables LLM agents to store, retrieve, link, and learn from their experiences across five memory types.</p>
+        <p>The language an agent uses to talk to its memory. AQL v0.13 is small: 13 verbs plus <code>USE</code>, each working on every memory type. The agent says what it wants; the engine works out how.</p>
 
-        <pre><code>RECALL FROM EPISODIC WHERE outcome = "success" ORDER BY confidence DESC LIMIT 5 RETURN *</code></pre>
+        <pre><code>RECALL FROM PROCEDURAL LIKE "pod OOMKilled restart" CONFIDENCE 0.7 LIMIT 3</code></pre>
 
         <h2>Interactive Playground</h2>
 
-        <p>Try AQL queries directly in your browser. Click an example or write your own — everything runs locally via WASM.</p>
+        <p>Try AQL queries directly in your browser. Click an example or write your own — everything runs locally via WASM. The playground parses AQL v0.13 and runs the core (reads, writes, links and pipelines on one in-browser memory); what needs a server — <code>USE</code> scripts, namespaces, <code>BRANCH</code> / <code>FORK</code> / <code>MERGE</code>, history, subscriptions — is refused with an error that says so.</p>
 
         <div class="playground">
             <div class="playground-header">
@@ -429,43 +429,43 @@
                         <div class="example-chip-title">STORE</div>
                         <div class="example-chip-code">STORE (bob, 82)</div>
                     </div>
-                    <div class="example-chip" data-query='STORE INTO PROCEDURAL (pattern = "retry", steps = "1. wait 2. retry", confidence = 0.85)'>
+                    <div class="example-chip" data-query='STORE INTO PROCEDURAL (name = "retry", steps = "1. wait 2. retry", confidence = 0.85)'>
                         <div class="example-chip-title">PROCEDURAL</div>
-                        <div class="example-chip-code">STORE pattern</div>
+                        <div class="example-chip-code">STORE a procedure</div>
                     </div>
                     <div class="example-chip" data-query='RECALL FROM WORKING WHERE score > 80 ORDER BY score DESC'>
                         <div class="example-chip-title">RECALL</div>
                         <div class="example-chip-code">ORDER BY score DESC</div>
                     </div>
-                    <div class="example-chip" data-query='RECALL FROM WORKING AGGREGATE COUNT(*), AVG(score) AS avg HAVING avg > 80'>
+                    <div class="example-chip" data-query='RECALL FROM WORKING AGGREGATE COUNT(*) AS n, AVG(score) AS avg HAVING avg > 80'>
                         <div class="example-chip-title">HAVING</div>
                         <div class="example-chip-code">AGGREGATE + HAVING</div>
                     </div>
-                    <div class="example-chip" data-query='STORE INTO EPISODIC (event = "login", user = "alice") SCOPE private NAMESPACE "auth"'>
-                        <div class="example-chip-title">SCOPED</div>
-                        <div class="example-chip-code">SCOPE + NAMESPACE</div>
+                    <div class="example-chip" data-query='STORE INTO EPISODIC (key = "ep:1", event = "login", user = "alice")'>
+                        <div class="example-chip-title">EPISODIC</div>
+                        <div class="example-chip-code">STORE an episode</div>
                     </div>
-                    <div class="example-chip" data-query='RECALL FROM EPISODIC WHERE event = "login" SCOPE private NAMESPACE "auth"'>
+                    <div class="example-chip" data-query='RECALL FROM EPISODIC WHERE key = "ep:1"'>
                         <div class="example-chip-title">RECALL</div>
-                        <div class="example-chip-code">RECALL scoped</div>
+                        <div class="example-chip-code">RECALL by key</div>
                     </div>
                     <div class="example-chip" data-query='STORE INTO TOOLS (name = "search", ranking = 0.95, task = "retrieval")'>
                         <div class="example-chip-title">TOOLS</div>
                         <div class="example-chip-code">STORE tool</div>
                     </div>
-                    <div class="example-chip" data-query='LOAD FROM TOOLS WHERE ranking > 0.5 ORDER BY ranking DESC'>
-                        <div class="example-chip-title">LOAD</div>
-                        <div class="example-chip-code">LOAD ranked tools</div>
+                    <div class="example-chip" data-query='RECALL FROM TOOLS WHERE task = "retrieval" LIMIT 3'>
+                        <div class="example-chip-title">TOOLS</div>
+                        <div class="example-chip-code">RECALL tools for a task</div>
                     </div>
-                    <div class="example-chip" data-query='SCAN FROM WORKING WINDOW TOP 3 BY score'>
-                        <div class="example-chip-title">SCAN</div>
-                        <div class="example-chip-code">TOP 3 BY score</div>
+                    <div class="example-chip" data-query='RECALL FROM WORKING ORDER BY score DESC LIMIT 3'>
+                        <div class="example-chip-title">TOP 3</div>
+                        <div class="example-chip-code">ORDER BY + LIMIT</div>
                     </div>
-                    <div class="example-chip" data-query='RECALL FROM SEMANTIC WHERE concept = "machine_learning" LIMIT 5'>
-                        <div class="example-chip-title">SEMANTIC</div>
-                        <div class="example-chip-code">WHERE concept</div>
+                    <div class="example-chip" data-query='RECALL FROM PROCEDURAL LIKE "retry after a timeout" CONFIDENCE 0.5'>
+                        <div class="example-chip-title">LIKE</div>
+                        <div class="example-chip-code">Similarity</div>
                     </div>
-                    <div class="example-chip" data-query='LINK FROM WORKING WHERE name = "alice" TO EPISODIC WHERE event = "login" TYPE "performed"'>
+                    <div class="example-chip" data-query='LINK FROM WORKING WHERE name = "alice" INTO EPISODIC WHERE key = "ep:1" TYPE "performed"'>
                         <div class="example-chip-title">LINK</div>
                         <div class="example-chip-code">Link records</div>
                     </div>
@@ -473,17 +473,21 @@
                         <div class="example-chip-title">FOLLOW</div>
                         <div class="example-chip-code">FOLLOW LINKS</div>
                     </div>
-                    <div class="example-chip" data-query='REFLECT FROM WORKING, FROM EPISODIC, FROM PROCEDURAL WITH LINKS ALL'>
-                        <div class="example-chip-title">REFLECT</div>
-                        <div class="example-chip-code">Multi + Links</div>
+                    <div class="example-chip" data-query='RECALL FROM WORKING WHERE name = "alice" WITH LINKS'>
+                        <div class="example-chip-title">WITH LINKS</div>
+                        <div class="example-chip-code">Records + their links</div>
                     </div>
-                    <div class="example-chip" data-query='PIPELINE rtb TIMEOUT 50ms SCAN FROM WORKING WINDOW LAST 3 | LOAD FROM TOOLS WHERE task = "bidding" LIMIT 3'>
+                    <div class="example-chip" data-query='PIPELINE rtb TIMEOUT 50ms RECALL FROM WORKING WINDOW LAST 3 | RECALL FROM TOOLS WHERE task = "retrieval" LIMIT 3'>
                         <div class="example-chip-title">PIPELINE</div>
-                        <div class="example-chip-code">3-stage pipeline</div>
+                        <div class="example-chip-code">2-stage pipeline</div>
                     </div>
                     <div class="example-chip" data-query='UPDATE INTO WORKING WHERE name = "alice" (score = 100, level = "expert")'>
                         <div class="example-chip-title">UPDATE</div>
                         <div class="example-chip-code">Additive update</div>
+                    </div>
+                    <div class="example-chip" data-query='FORGET FROM WORKING WHERE active = false'>
+                        <div class="example-chip-title">FORGET</div>
+                        <div class="example-chip-code">FORGET inactive</div>
                     </div>
                 </div>
             </div>
@@ -522,42 +526,95 @@
                 <td>Available capabilities</td>
                 <td>API endpoints, functions</td>
             </tr>
+            <tr>
+                <td><strong>ALL</strong></td>
+                <td>Every type at once (reads and FORGET)</td>
+                <td><code>RECALL FROM ALL WHERE url = "example.com"</code></td>
+            </tr>
         </table>
+
+        <p>Every statement says whose memory it touches with <code>NAMESPACE "&lt;ns&gt;"</code>, or takes it from a <code>USE</code> in force. <code>IN SCOPE "&lt;scope&gt;"</code> narrows to a shared group inside the namespace.</p>
 
         <h2>Quick Reference</h2>
 
-        <h3>Read Operations (FROM)</h3>
-        <pre><code>SCAN FROM WORKING WINDOW LAST 10            -- Recent context
-RECALL FROM EPISODIC WHERE user = "alice"   -- Query experiences
-LOOKUP FROM SEMANTIC KEY concept = "auth"   -- Direct key lookup
-LOAD FROM TOOLS WHERE category = "api"      -- Load tools</code></pre>
+        <h3>The 13 verbs (and USE)</h3>
+        <pre><code>Memory      RECALL  STORE  UPDATE  FORGET  LINK  UNLINK
+Namespaces  BRANCH  FORK  MERGE
+Flow        PIPELINE  SUBSCRIBE  UNSUBSCRIBE  PUBLISH
+Session     USE</code></pre>
 
-        <h3>Write Operations (INTO)</h3>
-        <pre><code>STORE INTO EPISODIC (event = "login") TTL 7d
-UPDATE INTO PROCEDURAL WHERE pattern = "checkout" (confidence = 0.95)
+        <h3>Read: RECALL, one verb, many ways in</h3>
+        <pre><code>RECALL FROM SEMANTIC WHERE key = "person:ada"                                  -- by key
+RECALL FROM SEMANTIC LIKE $question CONFIDENCE 0.7 LIMIT 5                     -- by similarity
+RECALL FROM EPISODIC WHERE pod = "payments" ORDER BY created_at DESC LIMIT 10  -- filtered
+RECALL FROM TOOLS WHERE task = "bidding" LIMIT 3                               -- tools for a task
+RECALL FROM WORKING WINDOW LAST 30s                                            -- the session, newest first</code></pre>
+
+        <h3>Write (INTO)</h3>
+        <pre><code>STORE  INTO EPISODIC (event = "login", user = "u123") TTL 7d
+UPDATE INTO SEMANTIC WHERE key = "person:ada" (role = "CTO")         -- the old version stays as history
 FORGET FROM WORKING WHERE stale = true</code></pre>
 
-        <h3>Linking & Traversal</h3>
-        <pre><code>LINK FROM SEMANTIC WHERE concept = "auth"
-     TO PROCEDURAL WHERE pattern = "login_flow"
-     TYPE "implements"
+        <h3>Linking &amp; Traversal</h3>
+        <pre><code>LINK   FROM SEMANTIC WHERE key = "person:ada" INTO SEMANTIC WHERE key = "org:acme" TYPE "works_at" WEIGHT 0.9
+UNLINK FROM SEMANTIC WHERE key = "person:ada" INTO SEMANTIC WHERE key = "org:acme" TYPE "works_at"
 
-RECALL FROM SEMANTIC WHERE concept = "payments"
-      FOLLOW LINKS TYPE "implements"
-      RETURN pattern, confidence</code></pre>
+RECALL FROM SEMANTIC WHERE key = "org:acme" FOLLOW LINKS TYPE "works_at" DEPTH 2</code></pre>
+
+        <h3>An agent's memory loop (a script with USE)</h3>
+        <pre><code>USE "agent:support-42";
+RECALL FROM SEMANTIC WHERE key = "customer:ada";
+RECALL FROM PROCEDURAL LIKE $question CONFIDENCE 0.7 LIMIT 3;
+STORE INTO EPISODIC (key = "ep:7781", event = "refund_asked", customer = "customer:ada", outcome = "approved") TTL 90d;
+LINK FROM EPISODIC WHERE key = "ep:7781" INTO SEMANTIC WHERE key = "customer:ada" TYPE "about";
+UPDATE INTO PROCEDURAL WHERE name = "refund_flow" (success_count = 13, confidence = 0.93)</code></pre>
+
+        <h3>Reading several namespaces</h3>
+        <pre><code>RECALL FROM SEMANTIC LIKE $question NAMESPACE ("crm", "kb") LIMIT 5    -- reads only; writes are in one namespace</code></pre>
+
+        <h3>Branch, try, merge</h3>
+        <pre><code>BRANCH FROM "crm" INTO "crm-try";
+UPDATE INTO SEMANTIC WHERE key = "person:ada" (role = "CTO") NAMESPACE "crm-try";
+RECALL FROM SEMANTIC WHERE key = "person:ada" NAMESPACE "crm-try";
+MERGE FROM "crm-try" INTO "crm";
+FORGET FROM ALL NAMESPACE "crm-try"
+
+FORK FROM "crm" INTO "crm-nov-1" AS OF "2026-11-01T00:00:00Z"    -- a full, independent copy</code></pre>
+
+        <h3>One thing, two names</h3>
+        <pre><code>UPDATE INTO SEMANTIC WHERE key = "person:ada" (aliases = ["person:ada-lovelace"]) NAMESPACE "crm"
+FORGET FROM SEMANTIC WHERE key = "person:ada-lovelace" NAMESPACE "crm"</code></pre>
+
+        <h3>History</h3>
+        <pre><code>RECALL FROM SEMANTIC WHERE key = "person:ada" AS OF "2026-11-01T09:00:00Z"
+RECALL FROM SEMANTIC WHERE key = "person:ada"
+       WITH HISTORY BETWEEN "2026-10-01T00:00:00Z" AND "2026-11-01T00:00:00Z"</code></pre>
+
+        <h3>Pipelines</h3>
+        <pre><code>PIPELINE bid TIMEOUT 80ms
+  RECALL FROM TOOLS WHERE task = "bidding" LIMIT 3
+  | RECALL FROM SEMANTIC WHERE key = {url}
+  | RECALL FROM EPISODIC WHERE url = {url} ORDER BY created_at DESC LIMIT 10
+  | STORE INTO EPISODIC (url = {url}, decision = "bid")</code></pre>
+
+        <h3>Live: topics and live queries</h3>
+        <pre><code>PUBLISH   TOPIC "orders" (order_id = "o-1", status = "paid") TTL 7d NAMESPACE "shop"
+SUBSCRIBE TOPIC "orders" WHERE status = "paid" NAMESPACE "shop"
+SUBSCRIBE RECALL FROM SEMANTIC WHERE kind = "customer" ORDER BY updated_at DESC LIMIT 20 NAMESPACE ("crm", "kb")
+UNSUBSCRIBE "sub-7f3a"</code></pre>
 
         <h2>Resources</h2>
 
         <p>
             <a href="https://github.com/srirammails/AQL">GitHub Repository</a> ·
-            <a href="https://github.com/srirammails/AQL/blob/main/spec/AQL_SPEC_v0.5.md">Specification (v0.5 base)</a> ·
-            <a href="https://github.com/srirammails/AQL/tree/main/spec">Additions v0.6–v0.12</a> ·
+            <a href="https://github.com/srirammails/AQL/blob/main/spec/AQL_SPEC_v0.13.md">Specification (v0.13)</a> ·
+            <a href="https://github.com/srirammails/AQL/blob/main/grammar/aql.pest">Grammar</a> ·
             <a href="https://github.com/srirammails/AQL/blob/main/CHANGELOG.md">Versions</a> ·
-            <a href="https://github.com/srirammails/AQL/tree/main/tests">Test Suite (321 tests)</a>
+            <a href="https://github.com/srirammails/AQL/tree/main/tests">Test Suite (406 tests)</a>
         </p>
 
         <footer>
-            <p>AQL v0.12 · release 0.12.0 · Apache 2.0 · <a href="https://github.com/srirammails/AQL">github.com/srirammails/AQL</a></p>
+            <p>AQL v0.13 · release 0.13.0 · Apache 2.0 · <a href="https://github.com/srirammails/AQL">github.com/srirammails/AQL</a></p>
         </footer>
     </div>
 

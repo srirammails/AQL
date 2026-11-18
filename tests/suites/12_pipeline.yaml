@@ -1,19 +1,21 @@
-# AQL v0.5 Test Suite - §12 PIPELINE
-# PIPELINE covers named and anonymous forms, TIMEOUT enforcement,
-# {var} inter-stage binding, and the full 5-stage RTB pipeline.
+# AQL v0.13 Test Suite - §12 PIPELINE
+# PIPELINE covers named and anonymous forms, TIMEOUT, {var} inter-stage binding,
+# and the full 5-stage RTB pipeline. spec/AQL_SPEC_v0.13.md §6, §8.
+# From v0.5 (§12, §16): LOAD / LOOKUP / SCAN stages → RECALL (KEY → WHERE,
+# SCAN FROM WORKING → RECALL FROM WORKING). Added T12-06: TIMEOUT is PIPELINE-only.
 
 suite: PIPELINE
-spec_section: "§12, §16"
-total_tests: 5
+spec_section: "v0.13"
+total_tests: 6
 bug_refs: [B13, B17, B18, B29]
 
 tests:
   - id: T12-01
     name: "PIPELINE named 2-stage"
-    spec_ref: "§12 PIPELINE named 2-stage"
+    spec_ref: "v0.13 §6 PIPELINE"
     seed_required: [ctx_scorer_v2, semantic-ai]
     query: |
-      PIPELINE bid_test TIMEOUT 80ms LOAD FROM TOOLS WHERE ranking > 0.5 RETURN tool_id | LOOKUP FROM SEMANTIC KEY concept = "ai_enterprise_content" RETURN concept, avg_cpm
+      PIPELINE bid_test TIMEOUT 80ms RECALL FROM TOOLS WHERE ranking > 0.5 RETURN tool_id | RECALL FROM SEMANTIC WHERE concept = "ai_enterprise_content" RETURN concept, avg_cpm
     expect:
       success: true
       steps: 2
@@ -27,20 +29,19 @@ tests:
     spec_ref: "B17 PIPELINE anonymous"
     seed_required: [w-001, e-001]
     query: |
-      PIPELINE TIMEOUT 100ms SCAN FROM WORKING WINDOW LAST 5 RETURN bid_id | RECALL FROM EPISODIC WHERE campaign = "summer_2026" RETURN bid_id
+      PIPELINE TIMEOUT 100ms RECALL FROM WORKING WINDOW LAST 5 RETURN bid_id | RECALL FROM EPISODIC WHERE campaign = "summer_2026" RETURN bid_id
     expect:
       success: true
       steps: 2
 
   - id: T12-03
-    name: "PIPELINE TIMEOUT required (B13/B18)"
-    spec_ref: "B13/B18 PIPELINE TIMEOUT required"
+    name: "PIPELINE without TIMEOUT runs (TIMEOUT is optional, v0.13)"
+    spec_ref: "v0.13 §6 TIMEOUT optional"
     seed_required: []
     query: |
       PIPELINE p RECALL FROM EPISODIC WHERE campaign = "summer_2026" RETURN bid_id
     expect:
-      success: false
-      error_contains: "TIMEOUT"
+      success: true
 
   - id: T12-04
     name: "PIPELINE {var} binding (B29)"
@@ -60,7 +61,7 @@ tests:
     spec_ref: "§16 RTB full 5-stage pipeline"
     seed_required: [ctx_scorer_v2, semantic-ai, e-001, e-002, $PROC_ID]
     query: |
-      PIPELINE bid_decision TIMEOUT 80ms LOAD FROM TOOLS WHERE ranking > 0.5 ORDER BY ranking DESC LIMIT 3 RETURN tool_id, name | LOOKUP FROM SEMANTIC KEY concept = "ai_enterprise_content" RETURN concept, avg_cpm | RECALL FROM EPISODIC WHERE campaign = "summer_2026" AND won = true ORDER BY cpm_paid DESC LIMIT 3 RETURN bid_id, cpm_paid | RECALL FROM PROCEDURAL WHERE pattern = "tech_news_premium" RETURN pattern, steps, variables | RECALL FROM EPISODIC WHERE campaign = "summer_2026" AGGREGATE COUNT(*) AS n RETURN n
+      PIPELINE bid_decision TIMEOUT 80ms RECALL FROM TOOLS WHERE ranking > 0.5 ORDER BY ranking DESC LIMIT 3 RETURN tool_id, name | RECALL FROM SEMANTIC WHERE concept = "ai_enterprise_content" RETURN concept, avg_cpm | RECALL FROM EPISODIC WHERE campaign = "summer_2026" AND won = true ORDER BY cpm_paid DESC LIMIT 3 RETURN bid_id, cpm_paid | RECALL FROM PROCEDURAL WHERE pattern = "tech_news_premium" RETURN pattern, steps, variables | RECALL FROM EPISODIC WHERE campaign = "summer_2026" AGGREGATE COUNT(*) AS n RETURN n
     expect:
       success: true
       steps: 5
@@ -76,3 +77,13 @@ tests:
         success: true
         values:
           n_gte: 1
+
+  - id: T12-06
+    name: "TIMEOUT is only valid on PIPELINE"
+    spec_ref: "v0.13 §8 TIMEOUT (PIPELINE only)"
+    seed_required: []
+    query: |
+      RECALL FROM EPISODIC WHERE campaign = "summer_2026" TIMEOUT 80ms
+    expect:
+      success: false
+      error_contains: "TIMEOUT"

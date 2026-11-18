@@ -1,0 +1,144 @@
+# AQL v0.13 Test Suite - aliases within a NAMESPACE
+# An alias belongs to the namespace of the statement that set it: another
+# namespace's records of the same keys are untouched, and the alias finds the
+# survivor only within its namespace (spec/AQL_SPEC_v0.13.md §4). Tests run in order.
+# From the superseded v0.13 additions (MERGE ENTITY … NAMESPACE): MERGE ENTITY → UPDATE … (aliases)
+# + FORGET, both with NAMESPACE; facts → LINKs of TYPE wrote; LOOKUP KEY id = →
+# RECALL WHERE key =. Removed: "merged again: refused", "an entity the namespace
+# doesn't have: refused", "NAMESPACE is the last clause" (no MERGE ENTITY).
+# Added: setups for the linked records, the separate FORGET, q's survivor key has
+# no alias link.
+
+suite: ALIASES_NAMESPACE
+spec_section: "v0.13"
+requires: server
+total_tests: 16
+
+tests:
+  - id: T32-01
+    name: "setup: the survivor in namespace p"
+    query: |
+      STORE INTO SEMANTIC (key = "t32:ada", name = "Ada") NAMESPACE "t32-p"
+    expect:
+      success: true
+
+  - id: T32-02
+    name: "setup: the duplicate in p"
+    query: |
+      STORE INTO SEMANTIC (key = "t32:lovelace", name = "Ada Lovelace") NAMESPACE "t32-p"
+    expect:
+      success: true
+
+  - id: T32-03
+    name: "setup: notes in p"
+    query: |
+      STORE INTO SEMANTIC (key = "t32:notes", name = "Notes") NAMESPACE "t32-p"
+    expect:
+      success: true
+
+  - id: T32-04
+    name: "setup: the duplicate wrote the notes, in p"
+    query: |
+      LINK FROM SEMANTIC WHERE key = "t32:lovelace" INTO SEMANTIC WHERE key = "t32:notes" TYPE "wrote" NAMESPACE "t32-p"
+    expect:
+      success: true
+      count: 1
+
+  - id: T32-05
+    name: "setup: the same keys in namespace q"
+    query: |
+      STORE INTO SEMANTIC (key = "t32:ada", name = "Ada Q") NAMESPACE "t32-q"
+    expect:
+      success: true
+
+  - id: T32-06
+    name: "setup: the duplicate in q"
+    query: |
+      STORE INTO SEMANTIC (key = "t32:lovelace", name = "Lovelace Q") NAMESPACE "t32-q"
+    expect:
+      success: true
+
+  - id: T32-07
+    name: "setup: notes in q"
+    query: |
+      STORE INTO SEMANTIC (key = "t32:notes", name = "Notes Q") NAMESPACE "t32-q"
+    expect:
+      success: true
+
+  - id: T32-08
+    name: "setup: the duplicate wrote the notes, in q"
+    query: |
+      LINK FROM SEMANTIC WHERE key = "t32:lovelace" INTO SEMANTIC WHERE key = "t32:notes" TYPE "wrote" NAMESPACE "t32-q"
+    expect:
+      success: true
+      count: 1
+
+  - id: T32-09
+    name: "p: the duplicate's key becomes the survivor's alias"
+    query: |
+      UPDATE INTO SEMANTIC WHERE key = "t32:ada" (aliases = ["t32:lovelace"]) NAMESPACE "t32-p"
+    expect:
+      success: true
+      count: 1
+
+  - id: T32-10
+    name: "p: FORGET the duplicate"
+    query: |
+      FORGET FROM SEMANTIC WHERE key = "t32:lovelace" NAMESPACE "t32-p"
+    expect:
+      success: true
+      count: 1
+
+  - id: T32-11
+    name: "p: the link is the survivor's"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t32:ada" FOLLOW LINKS TYPE "wrote" NAMESPACE "t32-p"
+    expect:
+      success: true
+      count: 1
+      contains:
+        - key: "t32:notes"
+
+  - id: T32-12
+    name: "p: the duplicate's record is gone"
+    query: |
+      RECALL FROM SEMANTIC WHERE name = "Ada Lovelace" NAMESPACE "t32-p"
+    expect:
+      success: true
+      count: 0
+
+  - id: T32-13
+    name: "q: untouched, the duplicate still has its link"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t32:lovelace" FOLLOW LINKS TYPE "wrote" NAMESPACE "t32-q"
+    expect:
+      success: true
+      count: 1
+      contains:
+        - name: "Notes Q"
+
+  - id: T32-14
+    name: "p: a read by the alias finds the survivor"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t32:lovelace" NAMESPACE "t32-p"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.key": "t32:ada", "data.records.0.data.aliases.0": "t32:lovelace"}
+
+  - id: T32-15
+    name: "q: the same key is q's own record"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t32:lovelace" NAMESPACE "t32-q"
+    expect:
+      success: true
+      count: 1
+      fields: {"data.records.0.data.key": "t32:lovelace", "data.records.0.data.name": "Lovelace Q"}
+
+  - id: T32-16
+    name: "q: the survivor's key has no alias there, so no link"
+    query: |
+      RECALL FROM SEMANTIC WHERE key = "t32:ada" FOLLOW LINKS TYPE "wrote" NAMESPACE "t32-q"
+    expect:
+      success: true
+      count: 0

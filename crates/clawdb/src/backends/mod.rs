@@ -3,6 +3,7 @@
 mod lance;
 
 pub use lance::LanceBackend;
+pub(crate) use lance::{compare_values, json_compare};
 
 use async_trait::async_trait;
 use crate::error::ClawResult;

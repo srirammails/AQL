@@ -15,6 +15,7 @@ pub mod db;
 pub mod error;
 pub mod executor;
 pub mod planner;
+pub mod script;
 pub mod types;
 
 // Re-exports

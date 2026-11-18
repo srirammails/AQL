@@ -1,7 +1,7 @@
 //! In-memory storage for all 5 memory types + links
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 use chrono::Utc;
 
@@ -15,38 +15,34 @@ pub struct Record {
     pub data: serde_json::Value,
     pub created_at: i64,
     pub accessed_at: i64,
+    pub version: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttl_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub links: Vec<Link>,
+    /// Insertion order (created_at can tie within a millisecond)
+    #[serde(skip)]
+    pub seq: u64,
 }
 
-/// A link between two records
+/// A link between two records. Read from either end (v0.13 §3).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Link {
     pub id: String,
     pub source_id: String,
     pub target_id: String,
+    pub from_type: String,
+    pub to_type: String,
     pub link_type: String,
-    pub weight: f32,
+    pub weight: f64,
     pub created_at: i64,
 }
 
-impl Link {
-    pub fn new(source_id: &str, target_id: &str, link_type: &str, weight: Option<f32>) -> Self {
-        Self {
-            id: Uuid::new_v4().to_string(),
-            source_id: source_id.to_string(),
-            target_id: target_id.to_string(),
-            link_type: link_type.to_string(),
-            weight: weight.unwrap_or(1.0),
-            created_at: Utc::now().timestamp_millis(),
-        }
-    }
+/// A weight as written (0.7, not 0.699999988 from the f32 the AST carries).
+pub fn weight_of(w: f32) -> f64 {
+    format!("{w}").parse().unwrap_or(w as f64)
 }
 
 impl Record {
@@ -58,10 +54,11 @@ impl Record {
             data,
             created_at: now,
             accessed_at: now,
+            version: 1,
             ttl_ms: None,
             namespace: None,
             scope: None,
-            links: Vec::new(),
+            seq: 0,
         }
     }
 
@@ -75,11 +72,6 @@ impl Record {
         self
     }
 
-    pub fn with_scope(mut self, scope: String) -> Self {
-        self.scope = Some(scope);
-        self
-    }
-
     /// Check if record is expired
     pub fn is_expired(&self) -> bool {
         if let Some(ttl) = self.ttl_ms {
@@ -90,19 +82,9 @@ impl Record {
         }
     }
 
-    /// Add a link to this record
-    pub fn add_link(&mut self, link: Link) {
-        self.links.push(link);
-    }
-
-    /// Get links of a specific type
-    pub fn get_links_by_type(&self, link_type: &str) -> Vec<&Link> {
-        self.links.iter().filter(|l| l.link_type == link_type).collect()
-    }
-
-    /// Get all links
-    pub fn get_all_links(&self) -> &[Link] {
-        &self.links
+    /// In `namespace` (no namespace named: every record)
+    pub fn in_namespace(&self, namespace: Option<&str>) -> bool {
+        namespace.is_none_or(|ns| self.namespace.as_deref() == Some(ns))
     }
 }
 
@@ -124,6 +106,8 @@ pub struct StoreStats {
     pub procedural: usize,
     pub tools: usize,
     pub semantic: usize,
+    /// The pre-seeded concepts `RECALL FROM SEMANTIC LIKE …` searches
+    pub semantic_seeded: usize,
     pub links: usize,
 }
 
@@ -133,14 +117,22 @@ pub struct MemoryStore {
     pub episodic: HashMap<String, Record>,
     pub procedural: HashMap<String, Record>,
     pub tools: HashMap<String, Record>,
+    /// Stored SEMANTIC records (STORE / UPDATE / WHERE reads)
+    pub semantic_records: HashMap<String, Record>,
+    /// Pre-seeded concepts for `RECALL FROM SEMANTIC LIKE …`
     pub semantic: SemanticStore,
-    /// Global link index: link_id -> Link
-    pub links: HashMap<String, Link>,
-    /// Index from source_id to link_ids
-    pub links_by_source: HashMap<String, Vec<String>>,
-    /// Index from target_id to link_ids
-    pub links_by_target: HashMap<String, Vec<String>>,
+    /// Links, in creation order
+    pub links: Vec<Link>,
+    next_seq: u64,
 }
+
+pub const RECORD_TYPES: [aql_parser::MemoryType; 5] = [
+    aql_parser::MemoryType::Working,
+    aql_parser::MemoryType::Episodic,
+    aql_parser::MemoryType::Procedural,
+    aql_parser::MemoryType::Tools,
+    aql_parser::MemoryType::Semantic,
+];
 
 impl MemoryStore {
     pub fn new() -> Self {
@@ -149,10 +141,10 @@ impl MemoryStore {
             episodic: HashMap::new(),
             procedural: HashMap::new(),
             tools: HashMap::new(),
+            semantic_records: HashMap::new(),
             semantic: SemanticStore::new(),
-            links: HashMap::new(),
-            links_by_source: HashMap::new(),
-            links_by_target: HashMap::new(),
+            links: Vec::new(),
+            next_seq: 0,
         }
     }
 
@@ -161,10 +153,9 @@ impl MemoryStore {
         self.episodic.clear();
         self.procedural.clear();
         self.tools.clear();
+        self.semantic_records.clear();
         self.links.clear();
-        self.links_by_source.clear();
-        self.links_by_target.clear();
-        // Don't clear semantic - it's pre-seeded
+        // The seeded concepts stay
     }
 
     pub fn stats(&self) -> StoreStats {
@@ -173,20 +164,20 @@ impl MemoryStore {
             episodic: self.episodic.len(),
             procedural: self.procedural.len(),
             tools: self.tools.len(),
-            semantic: self.semantic.len(),
+            semantic: self.semantic_records.len(),
+            semantic_seeded: self.semantic.len(),
             links: self.links.len(),
         }
     }
 
     pub fn dump(&self, memory_type: &str) -> Result<Vec<&Record>, String> {
-        match memory_type.to_uppercase().as_str() {
-            "WORKING" => Ok(self.working.values().collect()),
-            "EPISODIC" => Ok(self.episodic.values().collect()),
-            "PROCEDURAL" => Ok(self.procedural.values().collect()),
-            "TOOLS" => Ok(self.tools.values().collect()),
-            "SEMANTIC" => Err("Use RECALL FROM SEMANTIC LIKE to query semantic memory".to_string()),
-            _ => Err(format!("Unknown memory type: {}", memory_type)),
-        }
+        let mt = aql_parser::MemoryType::from_str(memory_type).ok_or_else(|| format!("Unknown memory type: {}", memory_type))?;
+        let mut records: Vec<&Record> = match mt {
+            aql_parser::MemoryType::All => RECORD_TYPES.iter().flat_map(|t| self.get_store(t).unwrap().values()).collect(),
+            t => self.get_store(&t).unwrap().values().collect(),
+        };
+        records.sort_by_key(|r| r.seq);
+        Ok(records)
     }
 
     pub fn get_store(&self, memory_type: &aql_parser::MemoryType) -> Option<&HashMap<String, Record>> {
@@ -195,7 +186,8 @@ impl MemoryStore {
             aql_parser::MemoryType::Episodic => Some(&self.episodic),
             aql_parser::MemoryType::Procedural => Some(&self.procedural),
             aql_parser::MemoryType::Tools => Some(&self.tools),
-            _ => None,
+            aql_parser::MemoryType::Semantic => Some(&self.semantic_records),
+            aql_parser::MemoryType::All => None,
         }
     }
 
@@ -205,241 +197,91 @@ impl MemoryStore {
             aql_parser::MemoryType::Episodic => Some(&mut self.episodic),
             aql_parser::MemoryType::Procedural => Some(&mut self.procedural),
             aql_parser::MemoryType::Tools => Some(&mut self.tools),
-            _ => None,
+            aql_parser::MemoryType::Semantic => Some(&mut self.semantic_records),
+            aql_parser::MemoryType::All => None,
+        }
+    }
+
+    /// The stores a statement on `memory_type` reads (ALL: every one)
+    pub fn stores_for(&self, memory_type: &aql_parser::MemoryType) -> Vec<&HashMap<String, Record>> {
+        match self.get_store(memory_type) {
+            Some(s) => vec![s],
+            None => RECORD_TYPES.iter().filter_map(|t| self.get_store(t)).collect(),
         }
     }
 
     /// Get record by ID from any memory type
     pub fn get_record(&self, id: &str) -> Option<&Record> {
-        self.working.get(id)
-            .or_else(|| self.episodic.get(id))
-            .or_else(|| self.procedural.get(id))
-            .or_else(|| self.tools.get(id))
-    }
-
-    /// Get mutable record by ID from any memory type
-    pub fn get_record_mut(&mut self, id: &str) -> Option<&mut Record> {
-        if self.working.contains_key(id) {
-            return self.working.get_mut(id);
-        }
-        if self.episodic.contains_key(id) {
-            return self.episodic.get_mut(id);
-        }
-        if self.procedural.contains_key(id) {
-            return self.procedural.get_mut(id);
-        }
-        if self.tools.contains_key(id) {
-            return self.tools.get_mut(id);
-        }
-        None
+        RECORD_TYPES.iter().find_map(|t| self.get_store(t).and_then(|s| s.get(id)))
     }
 
     /// Store a record
-    pub fn store(&mut self, memory_type: &aql_parser::MemoryType, record: Record) -> Result<Record, String> {
-        if matches!(memory_type, aql_parser::MemoryType::Semantic) {
-            return Err("Semantic memory is read-only in playground. Pre-seeded data available for queries.".to_string());
-        }
-
-        let store = self.get_store_mut(memory_type)
-            .ok_or_else(|| format!("Cannot store to {:?}", memory_type))?;
-
-        let id = record.id.clone();
-        store.insert(id, record.clone());
+    pub fn store(&mut self, memory_type: &aql_parser::MemoryType, mut record: Record) -> Result<Record, String> {
+        self.next_seq += 1;
+        record.seq = self.next_seq;
+        let store = self.get_store_mut(memory_type).ok_or_else(|| format!("Cannot store to {:?}", memory_type))?;
+        store.insert(record.id.clone(), record.clone());
         Ok(record)
     }
 
-    /// Delete records matching conditions
+    /// Delete records by id, and their links
     pub fn forget(&mut self, memory_type: &aql_parser::MemoryType, ids: Vec<String>) -> usize {
-        // First collect IDs that were actually deleted from the store
-        let deleted_ids: Vec<String> = if let Some(store) = self.get_store_mut(memory_type) {
-            ids.into_iter()
-                .filter(|id| store.remove(id).is_some())
-                .collect()
-        } else {
-            return 0;
+        let types: Vec<aql_parser::MemoryType> = match memory_type {
+            aql_parser::MemoryType::All => RECORD_TYPES.to_vec(),
+            t => vec![*t],
         };
-
-        // Then remove links for deleted records (separate borrow)
-        let count = deleted_ids.len();
-        for id in deleted_ids {
-            self.remove_links_for_record(&id);
-        }
-        count
-    }
-
-    /// Create a link between two records
-    pub fn create_link(&mut self, source_id: &str, target_id: &str, link_type: &str, weight: Option<f32>) -> Result<Link, String> {
-        // Verify source exists
-        if self.get_record(source_id).is_none() {
-            return Err(format!("Source record not found: {}", source_id));
-        }
-        // Verify target exists
-        if self.get_record(target_id).is_none() {
-            return Err(format!("Target record not found: {}", target_id));
-        }
-
-        // v0.7: LINK again between the same records with the same type updates that
-        // link's weight instead of adding a parallel one.
-        if let Some(id) = self.link_ids_between(source_id, target_id, Some(link_type)).into_iter().next() {
-            if let Some(w) = weight {
-                self.update_link(&id, None, Some(w));
-            }
-            return self.links.get(&id).cloned().ok_or_else(|| "link vanished".to_string());
-        }
-
-        let link = Link::new(source_id, target_id, link_type, weight);
-        let link_id = link.id.clone();
-
-        // Add to global link index
-        self.links.insert(link_id.clone(), link.clone());
-
-        // Add to source index
-        self.links_by_source
-            .entry(source_id.to_string())
-            .or_insert_with(Vec::new)
-            .push(link_id.clone());
-
-        // Add to target index
-        self.links_by_target
-            .entry(target_id.to_string())
-            .or_insert_with(Vec::new)
-            .push(link_id.clone());
-
-        // Add link to source record
-        if let Some(record) = self.get_record_mut(source_id) {
-            record.add_link(link.clone());
-        }
-
-        Ok(link)
-    }
-
-    /// The ids of the links from `source_id` to `target_id` (of `link_type`, if given).
-    pub fn link_ids_between(&self, source_id: &str, target_id: &str, link_type: Option<&str>) -> Vec<String> {
-        self.links_by_source
-            .get(source_id)
-            .into_iter()
-            .flatten()
-            .filter(|id| {
-                self.links.get(*id).is_some_and(|l| l.target_id == target_id && link_type.is_none_or(|t| l.link_type == t))
-            })
-            .cloned()
-            .collect()
-    }
-
-    /// Change a link's type and/or weight (v0.7 UPDATE LINK), and the copy its
-    /// source record carries.
-    pub fn update_link(&mut self, link_id: &str, link_type: Option<&str>, weight: Option<f32>) -> bool {
-        let Some(link) = self.links.get_mut(link_id) else { return false };
-        if let Some(t) = link_type {
-            link.link_type = t.to_string();
-        }
-        if let Some(w) = weight {
-            link.weight = w;
-        }
-        let (updated, source) = (link.clone(), link.source_id.clone());
-        if let Some(record) = self.get_record_mut(&source) {
-            for l in record.links.iter_mut().filter(|l| l.id == link_id) {
-                *l = updated.clone();
-            }
-        }
-        true
-    }
-
-    /// Remove one link (v0.7 UNLINK); the records stay.
-    pub fn remove_link(&mut self, link_id: &str) -> bool {
-        let Some(link) = self.links.remove(link_id) else { return false };
-        for index in [&mut self.links_by_source, &mut self.links_by_target] {
-            for ids in index.values_mut() {
-                ids.retain(|id| id != link_id);
-            }
-        }
-        if let Some(record) = self.get_record_mut(&link.source_id) {
-            record.links.retain(|l| l.id != link_id);
-        }
-        true
-    }
-
-    /// Remove all links for a record (when it's deleted)
-    fn remove_links_for_record(&mut self, record_id: &str) {
-        // Get link IDs to remove
-        let mut link_ids_to_remove = Vec::new();
-        if let Some(ids) = self.links_by_source.remove(record_id) {
-            link_ids_to_remove.extend(ids);
-        }
-        if let Some(ids) = self.links_by_target.remove(record_id) {
-            link_ids_to_remove.extend(ids);
-        }
-
-        // Remove links
-        for id in link_ids_to_remove {
-            self.links.remove(&id);
-        }
-    }
-
-    /// Get links from a source record
-    pub fn get_links_from(&self, source_id: &str, link_type: Option<&str>) -> Vec<&Link> {
-        if let Some(link_ids) = self.links_by_source.get(source_id) {
-            link_ids.iter()
-                .filter_map(|id| self.links.get(id))
-                .filter(|link| link_type.map_or(true, |t| link.link_type == t))
-                .collect()
-        } else {
-            Vec::new()
-        }
-    }
-
-    /// Get links to a target record
-    pub fn get_links_to(&self, target_id: &str, link_type: Option<&str>) -> Vec<&Link> {
-        if let Some(link_ids) = self.links_by_target.get(target_id) {
-            link_ids.iter()
-                .filter_map(|id| self.links.get(id))
-                .filter(|link| link_type.map_or(true, |t| link.link_type == t))
-                .collect()
-        } else {
-            Vec::new()
-        }
-    }
-
-    /// Follow links from records to get target records
-    pub fn follow_links(&self, source_ids: &[String], link_type: Option<&str>, depth: u32) -> Vec<&Record> {
-        let mut visited = std::collections::HashSet::new();
-        let mut current_ids: Vec<String> = source_ids.to_vec();
-        let mut result = Vec::new();
-
-        for _ in 0..depth {
-            let mut next_ids = Vec::new();
-            for source_id in &current_ids {
-                if visited.contains(source_id) {
-                    continue;
-                }
-                visited.insert(source_id.clone());
-
-                for link in self.get_links_from(source_id, link_type) {
-                    if !visited.contains(&link.target_id) {
-                        if let Some(record) = self.get_record(&link.target_id) {
-                            result.push(record);
-                            next_ids.push(link.target_id.clone());
-                        }
+        let mut deleted = HashSet::new();
+        for t in types {
+            if let Some(store) = self.get_store_mut(&t) {
+                for id in &ids {
+                    if store.remove(id).is_some() {
+                        deleted.insert(id.clone());
                     }
                 }
             }
-            if next_ids.is_empty() {
-                break;
-            }
-            current_ids = next_ids;
         }
-
-        result
+        self.links.retain(|l| !deleted.contains(&l.source_id) && !deleted.contains(&l.target_id));
+        deleted.len()
     }
 
-    /// Get all records from multiple memory types (for REFLECT FROM ALL)
-    pub fn get_all_records(&self) -> Vec<&Record> {
-        let mut records: Vec<&Record> = Vec::new();
-        records.extend(self.working.values().filter(|r| !r.is_expired()));
-        records.extend(self.episodic.values().filter(|r| !r.is_expired()));
-        records.extend(self.procedural.values().filter(|r| !r.is_expired()));
-        records.extend(self.tools.values().filter(|r| !r.is_expired()));
-        records
+    /// LINK: create the link, or set the weight of the one of this type between the
+    /// two records (no WEIGHT keeps the weight).
+    pub fn upsert_link(&mut self, source: &Record, target: &Record, link_type: &str, weight: Option<f32>) -> Link {
+        if let Some(l) = self
+            .links
+            .iter_mut()
+            .find(|l| l.source_id == source.id && l.target_id == target.id && l.link_type == link_type)
+        {
+            if let Some(w) = weight {
+                l.weight = weight_of(w);
+            }
+            return l.clone();
+        }
+        let link = Link {
+            id: Uuid::new_v4().to_string(),
+            source_id: source.id.clone(),
+            target_id: target.id.clone(),
+            from_type: source.memory_type.clone(),
+            to_type: target.memory_type.clone(),
+            link_type: link_type.to_string(),
+            weight: weight.map(weight_of).unwrap_or(1.0),
+            created_at: Utc::now().timestamp_millis(),
+        };
+        self.links.push(link.clone());
+        link
+    }
+
+    /// UNLINK: remove the links from `source_id` to `target_id` (of `link_type`, if given).
+    pub fn unlink(&mut self, source_id: &str, target_id: &str, link_type: Option<&str>) -> usize {
+        let before = self.links.len();
+        self.links
+            .retain(|l| !(l.source_id == source_id && l.target_id == target_id && link_type.is_none_or(|t| l.link_type == t)));
+        before - self.links.len()
+    }
+
+    /// The links at either end of a record, in creation order
+    pub fn links_of<'a>(&'a self, id: &'a str) -> impl Iterator<Item = &'a Link> + 'a {
+        self.links.iter().filter(move |l| l.source_id == id || l.target_id == id)
     }
 }
 

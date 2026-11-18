@@ -1,9 +1,10 @@
-# AQL v0.5 Test Suite - §14 HAVING
+# AQL v0.13 Test Suite - §14 HAVING
 # HAVING tests user-defined alias resolution for pass, suppress,
 # and multi-alias AND cases.
+# spec/AQL_SPEC_v0.13.md §8. Unchanged from v0.5 (§13).
 
 suite: HAVING
-spec_section: "§13"
+spec_section: "v0.13"
 total_tests: 4
 bug_refs: [B28]
 

@@ -1,11 +1,11 @@
-# AQL v0.9 Test Suite - GROUP BY
+# AQL v0.13 Test Suite - GROUP BY
 # GROUP BY with AGGREGATE: one row per group; HAVING, ORDER BY, LIMIT and RETURN on
-# the groups (spec/AQL_SPEC_v0.9_additions.md §1). Tests run in order; the first
+# the groups (spec/AQL_SPEC_v0.13.md §8). Tests run in order; the first
 # ones store five visits (gb = "t24"); one has no url. Totals per url: a 4, b 5,
-# c 2, none 6.
+# c 2, none 6. Unchanged from v0.9 §1.
 
 suite: GROUP_BY
-spec_section: "v0.9 §1"
+spec_section: "v0.13"
 total_tests: 13
 
 tests:
@@ -106,7 +106,7 @@ tests:
       error_contains: "requires AGGREGATE"
 
   - id: T24-13
-    name: "HAVING requires AGGREGATE (v0.5 §19)"
+    name: "HAVING requires AGGREGATE"
     query: |
       RECALL FROM EPISODIC WHERE gb = "t24" HAVING n > 1
     expect:

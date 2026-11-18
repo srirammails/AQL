@@ -1,16 +1,21 @@
-# AQL v0.5 Test Suite - §07 FORGET FROM
-# FORGET covers all types, idempotency, FORGET FROM ALL WHERE,
-# and validation rules requiring a WHERE predicate.
+# AQL v0.13 Test Suite - §07 FORGET FROM
+# FORGET covers WORKING / EPISODIC, idempotency and FORGET FROM ALL WHERE.
+# spec/AQL_SPEC_v0.13.md §2.
+# From v0.5 (§8, §19): SCOPE private dropped from the setups (modifier removed).
+# Removed: "FORGET predicate required" (FORGET FROM WORKING) and "FORGET FROM ALL no
+# WHERE" — in v0.13 WHERE is optional on FORGET (no WHERE erases everything in the
+# memory type; FORGET FROM ALL NAMESPACE "x" drops a namespace, see 33). Running
+# them here would erase the seed the later suites read.
 
 suite: FORGET
-spec_section: "§8, §19"
-total_tests: 6
+spec_section: "v0.13"
+total_tests: 4
 bug_refs: [B15]
 
 tests:
   - id: T07-01
     name: "FORGET WORKING WHERE"
-    spec_ref: "§8 FORGET WORKING WHERE"
+    spec_ref: "v0.13 §2 FORGET"
     seed_required: []
     setup: |
       STORE INTO WORKING (bid_id = "temp-w", event = "forget_test")
@@ -22,7 +27,7 @@ tests:
 
   - id: T07-02
     name: "FORGET idempotent"
-    spec_ref: "§8 FORGET idempotent"
+    spec_ref: "v0.13 §2 FORGET idempotent"
     seed_required: []
     # After T07-01 deleted the record
     query: |
@@ -33,10 +38,10 @@ tests:
 
   - id: T07-03
     name: "FORGET EPISODIC WHERE"
-    spec_ref: "§8 FORGET EPISODIC WHERE"
+    spec_ref: "v0.13 §2 FORGET"
     seed_required: []
     setup: |
-      STORE INTO EPISODIC (bid_id = "temp-e", campaign = "forget_test", won = false, cpm_paid = 0.5) SCOPE private
+      STORE INTO EPISODIC (bid_id = "temp-e", campaign = "forget_test", won = false, cpm_paid = 0.5)
     query: |
       FORGET FROM EPISODIC WHERE bid_id = "temp-e"
     expect:
@@ -49,29 +54,9 @@ tests:
     seed_required: []
     setup: |
       STORE INTO WORKING (campaign = "sweep_test", bid_id = "sweep-w")
-      STORE INTO EPISODIC (campaign = "sweep_test", bid_id = "sweep-e", won = false, cpm_paid = 0.1) SCOPE private
+      STORE INTO EPISODIC (campaign = "sweep_test", bid_id = "sweep-e", won = false, cpm_paid = 0.1)
     query: |
       FORGET FROM ALL WHERE campaign = "sweep_test"
     expect:
       success: true
       affected_count: 2
-
-  - id: T07-05
-    name: "FORGET predicate required"
-    spec_ref: "§8 FORGET predicate required"
-    seed_required: []
-    query: |
-      FORGET FROM WORKING
-    expect:
-      success: false
-      error_contains: "predicate"
-
-  - id: T07-06
-    name: "FORGET FROM ALL no WHERE"
-    spec_ref: "§19 FORGET FROM ALL no WHERE"
-    seed_required: []
-    query: |
-      FORGET FROM ALL
-    expect:
-      success: false
-      error_contains: "WHERE"

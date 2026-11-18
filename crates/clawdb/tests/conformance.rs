@@ -1,6 +1,8 @@
-//! AQL v0.5 Conformance Test Runner for ClawDB
+//! AQL v0.13 Conformance Test Runner for ClawDB
 //!
-//! Runs the 150 YAML test cases against ClawDB
+//! Runs the YAML suites in tests/suites against ClawDB (the suites marked
+//! `requires: server` need ADB and are skipped). It reports, it doesn't fail on a
+//! failed case; `node tests/run-tests.mjs --url …` checks more of each result.
 
 use std::collections::HashMap;
 use std::fs;
@@ -18,6 +20,9 @@ struct TestSuite {
     spec_section: String,
     #[serde(default)]
     total_tests: usize,
+    /// `server`: needs ADB (BRANCH / FORK / MERGE, subscriptions, IN SCOPE, …)
+    #[serde(default)]
+    requires: Option<String>,
     tests: Vec<TestCase>,
 }
 
@@ -35,7 +40,8 @@ struct TestCase {
 /// Expected test result
 #[derive(Debug, Deserialize)]
 struct Expectation {
-    success: bool,
+    #[serde(default)]
+    success: Option<bool>,
     #[serde(default)]
     count: Option<usize>,
     #[serde(default)]
@@ -64,16 +70,16 @@ async fn load_seed(db: &ClawDB) -> Result<String, Box<dyn std::error::Error>> {
         r#"STORE INTO WORKING (bid_id = "w-001", campaign = "summer_2026", floor_price = 2.5, geo = "IE", priority = 8)"#,
         r#"STORE INTO WORKING (bid_id = "w-002", campaign = "summer_2026", floor_price = 3.0, geo = "IE", priority = 10)"#,
         // EPISODIC memory
-        r#"STORE INTO EPISODIC (bid_id = "e-001", campaign = "summer_2026", won = true, cpm_paid = 3.20, ctr = 0.034, viewability = 0.91) SCOPE private NAMESPACE "pubcontext-bidder""#,
-        r#"STORE INTO EPISODIC (bid_id = "e-002", campaign = "summer_2026", won = false, cpm_paid = 1.10, ctr = 0.005, viewability = 0.55) SCOPE private NAMESPACE "pubcontext-bidder""#,
-        r#"STORE INTO EPISODIC (bid_id = "e-003", campaign = "winter_2026", won = true, cpm_paid = 2.85, ctr = 0.021) SCOPE shared NAMESPACE "agent-b-ns""#,
+        r#"STORE INTO EPISODIC (bid_id = "e-001", campaign = "summer_2026", won = true, cpm_paid = 3.20, ctr = 0.034, viewability = 0.91) NAMESPACE "pubcontext-bidder""#,
+        r#"STORE INTO EPISODIC (bid_id = "e-002", campaign = "summer_2026", won = false, cpm_paid = 1.10, ctr = 0.005, viewability = 0.55) NAMESPACE "pubcontext-bidder""#,
+        r#"STORE INTO EPISODIC (bid_id = "e-003", campaign = "winter_2026", won = true, cpm_paid = 2.85, ctr = 0.021) NAMESPACE "agent-b-ns""#,
         // SEMANTIC memory
-        r#"STORE INTO SEMANTIC (concept = "ai_enterprise_content", avg_cpm = 3.40, active = true, iab_category = "IAB19") SCOPE private"#,
-        r#"STORE INTO SEMANTIC (concept = "finance_news", avg_cpm = 4.10, active = true, iab_category = "IAB13") SCOPE private"#,
+        r#"STORE INTO SEMANTIC (concept = "ai_enterprise_content", avg_cpm = 3.40, active = true, iab_category = "IAB19")"#,
+        r#"STORE INTO SEMANTIC (concept = "finance_news", avg_cpm = 4.10, active = true, iab_category = "IAB13")"#,
         // PROCEDURAL memory
-        r#"STORE INTO PROCEDURAL (pattern = "tech_news_premium", severity = "high", source = "agent", confidence = 0.72, steps = "1. score page 2. bid floor + 18%", success_count = 8, failure_count = 2, variables = "bid_multiplier=1.18,min_floor=2.00,max_cpm=5.00") SCOPE shared"#,
+        r#"STORE INTO PROCEDURAL (pattern = "tech_news_premium", severity = "high", source = "agent", confidence = 0.72, steps = "1. score page 2. bid floor + 18%", success_count = 8, failure_count = 2, variables = "bid_multiplier=1.18,min_floor=2.00,max_cpm=5.00")"#,
         // TOOLS memory
-        r#"STORE INTO TOOLS (tool_id = "ctx_scorer_v2", name = "ctx_scorer_v2", category = "bidding", ranking = 0.92, schema = "context_score_v2", task = "scoring", ad_format = "display", description = "Context scoring tool for RTB") SCOPE shared"#,
+        r#"STORE INTO TOOLS (tool_id = "ctx_scorer_v2", name = "ctx_scorer_v2", category = "bidding", ranking = 0.92, schema = "context_score_v2", task = "scoring", ad_format = "display", description = "Context scoring tool for RTB")"#,
     ];
 
     let mut proc_id = String::new();
@@ -111,16 +117,16 @@ async fn run_test(db: &ClawDB, test: &TestCase, proc_id: &str) -> TestResult {
             return TestResult {
                 id: test.id.clone(),
                 name: test.name.clone(),
-                passed: !test.expect.success, // If we expected failure, this might be ok
+                passed: test.expect.success == Some(false), // a parse error is a failure
                 errors: vec![format!("Execution error: {}", e)],
             };
         }
     };
 
     // Check success
-    if result.success != test.expect.success {
+    if test.expect.success.is_some_and(|s| s != result.success) {
         errors.push(format!(
-            "Expected success={}, got {}",
+            "Expected success={:?}, got {}",
             test.expect.success, result.success
         ));
         if !result.success {
@@ -219,7 +225,7 @@ async fn run_test(db: &ClawDB, test: &TestCase, proc_id: &str) -> TestResult {
 /// Run all test suites
 async fn run_all_tests() -> Result<(), Box<dyn std::error::Error>> {
     println!("╔════════════════════════════════════════════════════════════╗");
-    println!("║       AQL v0.5 Conformance Test Suite - ClawDB             ║");
+    println!("║       AQL v0.13 Conformance Test Suite - ClawDB            ║");
     println!("╚════════════════════════════════════════════════════════════╝\n");
 
     // Create temp directory for LanceDB
@@ -259,6 +265,10 @@ async fn run_all_tests() -> Result<(), Box<dyn std::error::Error>> {
         let content = fs::read_to_string(&path)?;
         let suite: TestSuite = serde_yaml::from_str(&content)?;
 
+        if suite.requires.as_deref() == Some("server") {
+            println!("━━━ {} ({}): skipped, needs ADB", suite.suite, path.file_name().unwrap().to_string_lossy());
+            continue;
+        }
         println!("━━━ {} ({}) ━━━", suite.suite, path.file_name().unwrap().to_string_lossy());
 
         let mut suite_passed = 0;

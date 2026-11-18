@@ -1,9 +1,10 @@
-# AQL v0.5 Test Suite - §13 AGGREGATE
+# AQL v0.13 Test Suite - §13 AGGREGATE
 # AGGREGATE covers all 5 operators (COUNT, SUM, AVG, MIN, MAX)
 # on all 5 memory types.
+# spec/AQL_SPEC_v0.13.md §8. Unchanged from v0.5 (§13).
 
 suite: AGGREGATE
-spec_section: "§13"
+spec_section: "v0.13"
 total_tests: 10
 bug_refs: [B3, B27]
 

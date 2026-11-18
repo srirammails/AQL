@@ -1,8 +1,10 @@
-# AQL v0.5 Test Suite - §10 FOLLOW LINKS
+# AQL v0.13 Test Suite - §10 FOLLOW LINKS
 # FOLLOW LINKS tests single-hop traversal across memory type boundaries.
+# spec/AQL_SPEC_v0.13.md §1, §8. Unchanged from v0.5 (§10); in v0.13 links are
+# followed in both directions, which doesn't change these results.
 
 suite: FOLLOW_LINKS
-spec_section: "§10"
+spec_section: "v0.13"
 total_tests: 2
 bug_refs: [B6]
 depends_on: [T08-01, T08-02]

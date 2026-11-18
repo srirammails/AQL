@@ -1,7 +1,6 @@
-//! AQL Parser Implementation
-//!
-//! Parses AQL query strings into AST using pest.
+//! AQL v0.13 parser (`spec/AQL_SPEC_v0.13.md`): query strings into the AST, with pest.
 
+use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
 use std::time::Duration;
@@ -14,1939 +13,812 @@ use crate::error::{ParseError, ParseResult};
 #[grammar = "grammar/aql.pest"]
 pub struct AqlParser;
 
-/// Parse an AQL query string into a Statement
+type P<'a> = Pair<'a, Rule>;
+
+/// Parse an AQL statement.
 pub fn parse(input: &str) -> ParseResult<Statement> {
-    let pairs = AqlParser::parse(Rule::aql, input).map_err(|e| validation_error(input).unwrap_or_else(|| ParseError::from_pest(e)))?;
-
-    // Get the statement from aql rule
-    for pair in pairs {
-        if pair.as_rule() == Rule::aql {
-            for inner in pair.into_inner() {
-                if inner.as_rule() == Rule::statement {
-                    let stmt = parse_statement(inner)?;
-                    check_modifiers(&stmt)?;
-                    return Ok(stmt);
-                }
-            }
-        }
-    }
-
-    Err(ParseError::Empty)
+    let pairs = AqlParser::parse(Rule::aql, input).map_err(ParseError::from_pest)?;
+    let stmt = pairs
+        .flat_map(|p| p.into_inner())
+        .find(|p| p.as_rule() == Rule::statement)
+        .ok_or(ParseError::Empty)
+        .and_then(statement)?;
+    validate(&stmt)?;
+    Ok(stmt)
 }
 
-const WINDOW_ONLY: &str = "WINDOW is only valid on SCAN FROM WORKING and RECALL FROM EPISODIC";
-
-/// §19 rules on modifiers: `HAVING` and `GROUP BY` need `AGGREGATE`; `WINDOW` only on
-/// `SCAN FROM WORKING` and `RECALL FROM EPISODIC` (v0.9).
-fn check_modifiers(stmt: &Statement) -> ParseResult<()> {
-    let mods = match stmt {
-        Statement::Pipeline(p) => return p.stages.iter().try_for_each(check_modifiers),
-        Statement::Watch(w) => return check_modifiers(&w.query),
-        Statement::Scan(s) => &s.modifiers,
-        Statement::Recall(s) => {
-            if s.modifiers.window.is_some() && s.memory_type != MemoryType::Episodic {
-                return Err(ParseError::Validation(WINDOW_ONLY.into()));
-            }
-            &s.modifiers
-        }
-        Statement::Lookup(s) => &s.modifiers,
-        Statement::Load(s) => &s.modifiers,
-        Statement::Store(s) => &s.modifiers,
-        Statement::Update(s) => &s.modifiers,
-        Statement::Forget(s) => &s.modifiers,
-        _ => return Ok(()),
-    };
-    if mods.window.is_some() && !matches!(stmt, Statement::Scan(_) | Statement::Recall(_)) {
-        return Err(ParseError::Validation(WINDOW_ONLY.into()));
-    }
-    check_time(stmt, mods)?;
-    if mods.aggregate.is_none() {
-        for (set, name) in [(mods.having.is_some(), "HAVING"), (mods.group_by.is_some(), "GROUP BY")] {
-            if set {
-                return Err(ParseError::Validation(format!("{name} requires AGGREGATE")));
-            }
-        }
-    }
-    Ok(())
+/// Parse a script: statements separated by `;`. Each `USE "ns"` gives the statements
+/// after it that name no namespace that namespace; the USE statements themselves are
+/// not returned. `default` is a session's namespace in force before the script.
+pub fn parse_script(input: &str, default: Option<&str>) -> ParseResult<Vec<Statement>> {
+    Ok(script_steps(input, default)?.into_iter().map(|(_, s)| s).collect())
 }
 
-const TIME_ONLY: &str = "AS OF, VALID AT and WITH HISTORY are only valid on RECALL and LOOKUP";
-
-/// v0.10: history reads are RECALL / LOOKUP over the versioned memory types;
-/// validity belongs to SEMANTIC facts.
-fn check_time(stmt: &Statement, mods: &Modifiers) -> ParseResult<()> {
-    if mods.as_of.is_none() && mods.valid_at.is_none() && !mods.with_history {
-        return Ok(());
-    }
-    let memory = match stmt {
-        Statement::Recall(s) => s.memory_type,
-        Statement::Lookup(s) => s.memory_type,
-        _ => return Err(ParseError::Validation(TIME_ONLY.into())),
-    };
-    if mods.valid_at.is_some() && memory != MemoryType::Semantic {
-        return Err(ParseError::Validation("VALID AT is only valid on SEMANTIC".into()));
-    }
-    if matches!(memory, MemoryType::Working) {
-        return Err(ParseError::Validation("AS OF and WITH HISTORY aren't valid on WORKING".into()));
-    }
-    Ok(())
-}
-
-/// A clearer error than the grammar's for statements that break a §19 rule.
-fn validation_error(input: &str) -> Option<ParseError> {
-    let upper = input.trim_start().to_ascii_uppercase();
-    let has_where = upper.split_whitespace().any(|w| w == "WHERE");
-    for verb in ["FORGET", "UPDATE"] {
-        if upper.starts_with(verb) && !has_where {
-            return Some(ParseError::Validation(format!(
-                "{verb} requires a WHERE predicate (it never applies to a whole memory type)"
-            )));
+/// [`parse_script`], each statement with its 1-based position in the script as
+/// written (USE statements count), for errors that name it (`statement 3: …`).
+pub fn script_steps(input: &str, default: Option<&str>) -> ParseResult<Vec<(usize, Statement)>> {
+    let pairs = AqlParser::parse(Rule::script, input).map_err(ParseError::from_pest)?;
+    let mut current = default.map(String::from);
+    let mut out = Vec::new();
+    for (i, p) in pairs.flat_map(|p| p.into_inner()).filter(|p| p.as_rule() == Rule::statement).enumerate() {
+        let stmt = statement(p).and_then(|s| validate(&s).map(|_| s)).map_err(|e| ParseError::Validation(format!("statement {}: {e}", i + 1)))?;
+        match stmt {
+            Statement::Use(ns) => current = Some(ns),
+            s => out.push((
+                i + 1,
+                match &current {
+                    Some(ns) => s.with_default_namespace(ns),
+                    None => s,
+                },
+            )),
         }
     }
-    None
+    Ok(out)
 }
 
-/// Parse a statement
-fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
+/// Whether `input` is a script: more than one statement, or a USE.
+pub fn is_script(input: &str) -> bool {
+    let t = input.trim_start();
+    if t.len() >= 3 && t[..3].eq_ignore_ascii_case("USE") && t[3..].starts_with(|c: char| c.is_whitespace()) {
+        return true;
+    }
+    // A `;` outside a string (and not the last character).
+    let (mut in_str, mut escaped) = (false, false);
+    let body = input.trim_end().trim_end_matches(';');
+    for c in body.chars() {
+        match (in_str, escaped, c) {
+            (true, true, _) => escaped = false,
+            (true, false, '\\') => escaped = true,
+            (_, false, '"') => in_str = !in_str,
+            (false, _, ';') => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+// ---------------------------------------------------------------- statements
+
+fn statement(pair: P) -> ParseResult<Statement> {
     let inner = pair.into_inner().next().ok_or(ParseError::Empty)?;
-
-    match inner.as_rule() {
-        Rule::pipeline_stmt => parse_pipeline(inner),
-        Rule::reflect_stmt => parse_reflect(inner),
-        Rule::scan_stmt => parse_scan(inner),
-        Rule::recall_stmt => parse_recall(inner),
-        Rule::lookup_stmt => parse_lookup(inner),
-        Rule::load_stmt => parse_load(inner),
-        Rule::store_stmt => parse_store(inner),
-        Rule::update_stmt => parse_update(inner),
-        Rule::forget_stmt => parse_forget(inner),
-        Rule::link_stmt => parse_link(inner),
-        Rule::update_link_stmt => parse_update_link(inner),
-        Rule::unlink_stmt => parse_unlink(inner),
-        Rule::merge_stmt => parse_merge(inner),
-        Rule::subscribe_stmt => parse_subscribe(inner),
-        Rule::unsubscribe_stmt => parse_unsubscribe(inner),
-        Rule::ack_stmt => parse_ack(inner),
-        Rule::publish_stmt => parse_publish(inner),
-        Rule::watch_stmt => parse_watch(inner),
-        Rule::unwatch_stmt => parse_unwatch(inner),
-        _ => Err(ParseError::UnexpectedRule(format!("{:?}", inner.as_rule()))),
-    }
-}
-
-/// Parse PIPELINE statement
-fn parse_pipeline(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut name = String::from("_anonymous");
-    let mut timeout = None;
-    let mut stages = Vec::new();
-
-    for item in pair.into_inner() {
-        match item.as_rule() {
-            Rule::pipeline_name => {
-                // Extract the identifier from pipeline_name
-                if let Some(ident) = item.into_inner().find(|p| p.as_rule() == Rule::identifier) {
-                    name = ident.as_str().to_string();
-                }
-            }
-            Rule::timeout_mod => {
-                timeout = Some(parse_duration_from_mod(item)?);
-            }
-            Rule::pipeline_stage => {
-                let stage_inner = item.into_inner().next().ok_or(ParseError::Empty)?;
-                stages.push(parse_statement_inner(stage_inner)?);
-            }
-            _ => {}
-        }
-    }
-
-    Ok(Statement::Pipeline(PipelineStmt {
-        name,
-        timeout,
-        stages,
-    }))
-}
-
-/// Parse inner statement (for pipeline stages)
-fn parse_statement_inner(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    match pair.as_rule() {
-        Rule::scan_stmt => parse_scan(pair),
-        Rule::recall_stmt => parse_recall(pair),
-        Rule::lookup_stmt => parse_lookup(pair),
-        Rule::load_stmt => parse_load(pair),
-        Rule::reflect_stmt => parse_reflect(pair),
-        _ => Err(ParseError::UnexpectedRule(format!("{:?}", pair.as_rule()))),
-    }
-}
-
-/// Parse REFLECT statement
-fn parse_reflect(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut sources = Vec::new();
-    let mut with_links = None;
-    let mut follow_links = None;
-    let mut then_clause = None;
-
-    for item in pair.into_inner() {
-        match item.as_rule() {
-            Rule::reflect_source => {
-                sources.push(parse_reflect_source(item)?);
-            }
-            Rule::with_links_mod => {
-                with_links = Some(parse_with_links(item)?);
-            }
-            Rule::follow_links_mod => {
-                follow_links = Some(parse_follow_links(item)?);
-            }
-            Rule::then_clause => {
-                let inner = item.into_inner().next().ok_or(ParseError::Empty)?;
-                // then_clause contains store_stmt or update_stmt directly
-                let stmt = match inner.as_rule() {
-                    Rule::store_stmt => parse_store(inner)?,
-                    Rule::update_stmt => parse_update(inner)?,
-                    _ => return Err(ParseError::UnexpectedRule(format!("{:?}", inner.as_rule()))),
-                };
-                then_clause = Some(Box::new(stmt));
-            }
-            _ => {}
-        }
-    }
-
-    Ok(Statement::Reflect(ReflectStmt {
-        sources,
-        with_links,
-        follow_links,
-        then_clause,
-    }))
-}
-
-/// Parse reflect source
-fn parse_reflect_source(pair: pest::iterators::Pair<Rule>) -> ParseResult<ReflectSource> {
-    let mut inner = pair.into_inner();
-
-    let memory_type = parse_memory_type(inner.next().ok_or(ParseError::Missing("memory type"))?)?;
-    let predicate = inner.next().map(parse_predicate).transpose()?;
-
-    Ok(ReflectSource {
-        memory_type,
-        predicate,
+    Ok(match inner.as_rule() {
+        Rule::use_stmt => Statement::Use(string(first(inner)?)?),
+        Rule::pipeline_stmt => Statement::Pipeline(pipeline(inner)?),
+        Rule::recall_stmt => Statement::Recall(recall(inner)?),
+        Rule::store_stmt => Statement::Store(store(inner)?),
+        Rule::update_stmt => Statement::Update(update(inner)?),
+        Rule::forget_stmt => Statement::Forget(forget(inner)?),
+        Rule::link_stmt => Statement::Link(link(inner)?),
+        Rule::unlink_stmt => Statement::Unlink(unlink(inner)?),
+        Rule::branch_stmt => Statement::Branch(namespace_stmt(inner)?),
+        Rule::fork_stmt => Statement::Fork(namespace_stmt(inner)?),
+        Rule::merge_stmt => Statement::Merge(merge(inner)?),
+        Rule::subscribe_stmt => Statement::Subscribe(subscribe(inner)?),
+        Rule::unsubscribe_stmt => Statement::Unsubscribe(unsubscribe(inner)?),
+        Rule::publish_stmt => Statement::Publish(publish(inner)?),
+        r => return Err(ParseError::UnexpectedRule(format!("{r:?}"))),
     })
 }
 
-/// Parse SCAN statement
-fn parse_scan(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut window = None;
-    let mut modifiers = Modifiers::default();
-
+fn pipeline(pair: P) -> ParseResult<PipelineStmt> {
+    let mut p = PipelineStmt { name: String::new(), timeout: None, stages: Vec::new() };
     for item in pair.into_inner() {
         match item.as_rule() {
-            Rule::window_mod => {
-                window = Some(parse_window(item)?);
-            }
-            Rule::modifier => {
-                parse_modifier_into(item, &mut modifiers)?;
+            Rule::pipeline_name => p.name = item.as_str().trim().to_string(),
+            Rule::timeout_mod => p.timeout = Some(duration(first(item)?)?),
+            Rule::pipeline_stage => {
+                let s = first(item)?;
+                p.stages.push(match s.as_rule() {
+                    Rule::recall_stmt => Statement::Recall(recall(s)?),
+                    Rule::store_stmt => Statement::Store(store(s)?),
+                    Rule::update_stmt => Statement::Update(update(s)?),
+                    r => return Err(ParseError::UnexpectedRule(format!("{r:?}"))),
+                });
             }
             _ => {}
         }
     }
-
-    Ok(Statement::Scan(ScanStmt { window, modifiers }))
+    Ok(p)
 }
 
-/// Parse RECALL statement
-fn parse_recall(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut inner = pair.into_inner();
-
-    let memory_type = parse_memory_type(inner.next().ok_or(ParseError::Missing("memory type"))?)?;
-
-    // Predicate is optional - defaults to All if not specified
+fn recall(pair: P) -> ParseResult<RecallStmt> {
+    let mut memory_type = MemoryType::All;
     let mut predicate = Predicate::All;
     let mut modifiers = Modifiers::default();
-
-    for item in inner {
+    for item in pair.into_inner() {
         match item.as_rule() {
-            Rule::predicate => {
-                predicate = parse_predicate(item)?;
-            }
-            Rule::in_scope_mod => {
-                modifiers.in_scope = Some(parse_in_scope(item)?);
-            }
-            Rule::modifier => {
-                parse_modifier_into(item, &mut modifiers)?;
-            }
+            Rule::memory_type => memory_type = memory(item)?,
+            Rule::in_scope_mod => modifiers.in_scope = Some(string(first(item)?)?),
+            Rule::predicate => predicate = predicate_of(first(item)?)?,
+            Rule::modifier => modifier(item, &mut modifiers)?,
             _ => {}
         }
     }
-
-    Ok(Statement::Recall(RecallStmt {
-        memory_type,
-        predicate,
-        modifiers,
-    }))
+    Ok(RecallStmt { memory_type, predicate, modifiers })
 }
 
-/// Parse LOOKUP statement
-fn parse_lookup(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut inner = pair.into_inner();
-
-    let memory_type = parse_memory_type(inner.next().ok_or(ParseError::Missing("memory type"))?)?;
-
-    let mut predicate = None;
-    let mut modifiers = Modifiers::default();
-    for item in inner {
-        match item.as_rule() {
-            Rule::in_scope_mod => modifiers.in_scope = Some(parse_in_scope(item)?),
-            Rule::predicate => predicate = Some(parse_predicate(item)?),
-            Rule::modifier => parse_modifier_into(item, &mut modifiers)?,
-            _ => {}
-        }
-    }
-    let predicate = predicate.ok_or(ParseError::Missing("predicate"))?;
-
-    Ok(Statement::Lookup(LookupStmt {
-        memory_type,
-        predicate,
-        modifiers,
-    }))
-}
-
-/// Parse LOAD statement
-fn parse_load(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut inner = pair.into_inner();
-
-    let predicate = parse_predicate(inner.next().ok_or(ParseError::Missing("predicate"))?)?;
-
-    let mut modifiers = Modifiers::default();
-    for item in inner {
-        if item.as_rule() == Rule::modifier {
-            parse_modifier_into(item, &mut modifiers)?;
-        }
-    }
-
-    Ok(Statement::Load(LoadStmt {
-        predicate,
-        modifiers,
-    }))
-}
-
-/// Parse STORE statement
-fn parse_store(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut inner = pair.into_inner();
-
-    let memory_type = parse_memory_type(inner.next().ok_or(ParseError::Missing("memory type"))?)?;
-    let mut next = inner.next().ok_or(ParseError::Missing("payload"))?;
-    let mut fact = None;
-    if next.as_rule() == Rule::fact_mod {
-        fact = Some(FactMode { multi: next.into_inner().any(|p| p.as_rule() == Rule::multi_kw) });
-        next = inner.next().ok_or(ParseError::Missing("payload"))?;
-    }
-    let payload = parse_payload(next)?;
-    if fact.is_some() {
-        check_fact(memory_type, &payload)?;
-    }
-
-    let mut modifiers = Modifiers::default();
-    for item in inner {
-        if item.as_rule() == Rule::modifier {
-            parse_modifier_into(item, &mut modifiers)?;
-        }
-    }
-
-    Ok(Statement::Store(StoreStmt {
-        memory_type,
-        fact,
-        payload,
-        modifiers,
-    }))
-}
-
-/// v0.8 §6: a fact is SEMANTIC, with a string `subject` and `predicate` and exactly
-/// one of `object` (an entity key, string) and `value` (a literal).
-fn check_fact(memory_type: MemoryType, payload: &[FieldAssignment]) -> ParseResult<()> {
-    if memory_type != MemoryType::Semantic {
-        return Err(ParseError::Validation("FACT is only valid on SEMANTIC".into()));
-    }
-    let get = |f: &str| payload.iter().find(|a| a.field == f).map(|a| &a.value);
-    for f in ["subject", "predicate"] {
-        if !matches!(get(f), Some(Value::String(s)) if !s.is_empty()) && !matches!(get(f), Some(Value::Variable(_))) {
-            return Err(ParseError::Validation(format!("FACT needs {f} = \"…\"")));
-        }
-    }
-    match (get("object"), get("value")) {
-        (Some(Value::String(s)), None) if !s.is_empty() => Ok(()),
-        (Some(Value::Variable(_)), None) => Ok(()),
-        (None, Some(_)) => Ok(()),
-        (Some(_), None) => Err(ParseError::Validation("FACT object is an entity key: object = \"…\"".into())),
-        _ => Err(ParseError::Validation("FACT needs exactly one of object = \"entity key\" and value = …".into())),
-    }
-}
-
-/// Parse UPDATE statement
-fn parse_update(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut inner = pair.into_inner();
-
-    let memory_type = parse_memory_type(inner.next().ok_or(ParseError::Missing("memory type"))?)?;
-    let conditions = parse_condition_list(inner.next().ok_or(ParseError::Missing("conditions"))?)?;
-    let payload = parse_payload(inner.next().ok_or(ParseError::Missing("payload"))?)?;
-
-    let mut modifiers = Modifiers::default();
-    for item in inner {
-        if item.as_rule() == Rule::modifier {
-            parse_modifier_into(item, &mut modifiers)?;
-        }
-    }
-
-    Ok(Statement::Update(UpdateStmt {
-        memory_type,
-        conditions,
-        payload,
-        modifiers,
-    }))
-}
-
-/// Parse FORGET statement
-fn parse_forget(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut inner = pair.into_inner();
-
-    let memory_type = parse_memory_type(inner.next().ok_or(ParseError::Missing("memory type"))?)?;
-    let conditions = parse_condition_list(inner.next().ok_or(ParseError::Missing("conditions"))?)?;
-
-    let mut modifiers = Modifiers::default();
-    for item in inner {
-        if item.as_rule() == Rule::modifier {
-            parse_modifier_into(item, &mut modifiers)?;
-        }
-    }
-
-    Ok(Statement::Forget(ForgetStmt {
-        memory_type,
-        conditions,
-        modifiers,
-    }))
-}
-
-/// Parse LINK statement
-fn parse_link(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut inner = pair.into_inner();
-
-    let from_type = parse_memory_type(inner.next().ok_or(ParseError::Missing("from type"))?)?;
-    let from_conditions =
-        parse_condition_list(inner.next().ok_or(ParseError::Missing("from conditions"))?)?;
-    let to_type = parse_memory_type(inner.next().ok_or(ParseError::Missing("to type"))?)?;
-    let to_conditions =
-        parse_condition_list(inner.next().ok_or(ParseError::Missing("to conditions"))?)?;
-    let link_type = parse_string_literal(inner.next().ok_or(ParseError::Missing("link type"))?)?;
-
-    let (mut weight, mut namespace, mut branch) = (None, None, None);
-    for p in inner {
-        match p.as_rule() {
-            Rule::namespace_mod => namespace = Some(parse_namespace_mod(p)?),
-            Rule::branch_mod => branch = Some(parse_namespace_mod(p)?),
-            _ => weight = Some(parse_float(p)?),
-        }
-    }
-
-    Ok(Statement::Link(LinkStmt {
-        from_type,
-        from_conditions,
-        to_type,
-        to_conditions,
-        link_type,
-        weight,
-        namespace,
-        branch,
-    }))
-}
-
-/// The `FROM … WHERE … TO … WHERE …` part LINK, UPDATE LINK and UNLINK share.
-type LinkEnds = (MemoryType, Vec<Condition>, MemoryType, Vec<Condition>);
-
-fn parse_link_ends(inner: &mut pest::iterators::Pairs<Rule>) -> ParseResult<LinkEnds> {
-    let from_type = parse_memory_type(inner.next().ok_or(ParseError::Missing("from type"))?)?;
-    let from_conditions = parse_condition_list(inner.next().ok_or(ParseError::Missing("from conditions"))?)?;
-    let to_type = parse_memory_type(inner.next().ok_or(ParseError::Missing("to type"))?)?;
-    let to_conditions = parse_condition_list(inner.next().ok_or(ParseError::Missing("to conditions"))?)?;
-    Ok((from_type, from_conditions, to_type, to_conditions))
-}
-
-/// `TYPE "t"` → `t`.
-fn parse_link_type_filter(pair: pest::iterators::Pair<Rule>) -> ParseResult<String> {
-    parse_string_literal(pair.into_inner().next().ok_or(ParseError::Missing("link type"))?)
-}
-
-/// Parse UPDATE LINK statement (v0.7)
-fn parse_update_link(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut inner = pair.into_inner();
-    let (from_type, from_conditions, to_type, to_conditions) = parse_link_ends(&mut inner)?;
-    let (mut link_type, mut weight, mut new_type, mut namespace, mut branch) = (None, None, None, None, None);
-    for item in inner {
-        match item.as_rule() {
-            Rule::namespace_mod => namespace = Some(parse_namespace_mod(item)?),
-            Rule::branch_mod => branch = Some(parse_namespace_mod(item)?),
-            Rule::link_type_filter => link_type = Some(parse_link_type_filter(item)?),
-            Rule::link_weight_set => {
-                weight = Some(parse_float(item.into_inner().next().ok_or(ParseError::Missing("weight"))?)?);
-            }
-            Rule::payload => {
-                for a in parse_payload(item)? {
-                    match (a.field.to_lowercase().as_str(), &a.value) {
-                        ("weight", Value::Float(w)) => weight = Some(*w as f32),
-                        ("weight", Value::Int(w)) => weight = Some(*w as f32),
-                        ("type", Value::String(t)) | ("link_type", Value::String(t)) => new_type = Some(t.clone()),
-                        (f, _) => {
-                            return Err(ParseError::Validation(format!(
-                                "UPDATE LINK sets weight (a number) and type (a string), not {f}"
-                            )))
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    if weight.is_none() && new_type.is_none() {
-        return Err(ParseError::Validation("UPDATE LINK needs a new weight or type".into()));
-    }
-    Ok(Statement::UpdateLink(UpdateLinkStmt { from_type, from_conditions, to_type, to_conditions, link_type, weight, new_type, namespace, branch }))
-}
-
-/// Parse UNLINK statement (v0.7)
-fn parse_unlink(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut inner = pair.into_inner();
-    let (from_type, from_conditions, to_type, to_conditions) = parse_link_ends(&mut inner)?;
-    let (mut link_type, mut namespace, mut branch) = (None, None, None);
-    for p in inner {
-        match p.as_rule() {
-            Rule::namespace_mod => namespace = Some(parse_namespace_mod(p)?),
-            Rule::branch_mod => branch = Some(parse_namespace_mod(p)?),
-            _ => link_type = Some(parse_link_type_filter(p)?),
-        }
-    }
-    Ok(Statement::Unlink(UnlinkStmt { from_type, from_conditions, to_type, to_conditions, link_type, namespace, branch }))
-}
-
-fn parse_merge(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut inner = pair.into_inner();
-    let from = parse_string_literal(inner.next().ok_or(ParseError::Missing("entity to merge"))?)?;
-    let into = parse_string_literal(inner.next().ok_or(ParseError::Missing("entity to merge into"))?)?;
-    if from.is_empty() || into.is_empty() {
-        return Err(ParseError::Validation("MERGE needs two entity keys".into()));
-    }
-    if from == into {
-        return Err(ParseError::Validation("MERGE needs two different entities".into()));
-    }
-    Ok(Statement::Merge(MergeStmt { from, into }))
-}
-
-/// Parse memory type
-fn parse_memory_type(pair: pest::iterators::Pair<Rule>) -> ParseResult<MemoryType> {
-    MemoryType::from_str(pair.as_str())
-        .ok_or_else(|| ParseError::InvalidMemoryType(pair.as_str().to_string()))
-}
-
-/// Parse predicate
-fn parse_predicate(pair: pest::iterators::Pair<Rule>) -> ParseResult<Predicate> {
-    let inner = pair.into_inner().next().ok_or(ParseError::Empty)?;
-
-    match inner.as_rule() {
-        Rule::where_pred => {
-            let conditions = parse_condition_list(
-                inner.into_inner().next().ok_or(ParseError::Empty)?,
-            )?;
-            Ok(Predicate::Where { conditions })
-        }
-        Rule::key_pred => {
-            let mut parts = inner.into_inner();
-            let field = parts
-                .next()
-                .ok_or(ParseError::Missing("field"))?
-                .as_str()
-                .to_string();
-            let value = parse_value(parts.next().ok_or(ParseError::Missing("value"))?)?;
-            Ok(Predicate::Key { field, value })
-        }
+fn predicate_of(pair: P) -> ParseResult<Predicate> {
+    match pair.as_rule() {
+        Rule::where_pred => Ok(Predicate::Where { conditions: conditions(first(pair)?)? }),
         Rule::like_pred => {
-            let var = inner
-                .into_inner()
-                .next()
-                .ok_or(ParseError::Missing("variable"))?;
-            let variable = parse_variable_name(var)?;
-            Ok(Predicate::Like { variable })
+            let v = first(pair)?;
+            Ok(match v.as_rule() {
+                Rule::variable => Predicate::Like { variable: variable(v), text: None },
+                _ => {
+                    let text = string(v)?;
+                    Predicate::Like { variable: text.clone(), text: Some(text) }
+                }
+            })
         }
-        Rule::pattern_pred => {
-            let mut parts = inner.into_inner();
-            let var = parts.next().ok_or(ParseError::Missing("variable"))?;
-            let text = if var.as_rule() == Rule::string_literal { Some(parse_string_literal(var.clone())?) } else { None };
-            let variable = match &text {
-                Some(t) => t.clone(),
-                None => parse_variable_name(var)?,
-            };
-            let threshold = parts.next().map(|p| parse_float(p)).transpose()?;
-            Ok(Predicate::Pattern { variable, threshold, text })
-        }
-        Rule::all_pred => Ok(Predicate::All),
-        _ => Err(ParseError::UnexpectedRule(format!("{:?}", inner.as_rule()))),
+        r => Err(ParseError::UnexpectedRule(format!("{r:?}"))),
     }
 }
 
-/// Parse condition list
-fn parse_condition_list(pair: pest::iterators::Pair<Rule>) -> ParseResult<Vec<Condition>> {
-    let mut conditions = Vec::new();
-    let mut pending_logical_op: Option<LogicalOp> = None;
-
+fn store(pair: P) -> ParseResult<StoreStmt> {
+    let mut s = StoreStmt { memory_type: MemoryType::All, payload: Vec::new(), modifiers: Modifiers::default() };
     for item in pair.into_inner() {
         match item.as_rule() {
-            Rule::condition_atom => {
-                let mut cond = parse_condition_atom(item)?;
-                cond.set_logical_op(pending_logical_op.take());
-                conditions.push(cond);
-            }
-            Rule::simple_condition => {
-                let mut condition = parse_simple_condition(item)?;
-                condition.set_logical_op(pending_logical_op.take());
-                conditions.push(condition);
-            }
-            Rule::logical_op => {
-                pending_logical_op = LogicalOp::from_str(item.as_str());
-            }
-            _ => {
-                // Try to parse AND/OR keywords directly
-                let s = item.as_str().to_uppercase();
-                if s == "AND" || s == "OR" {
-                    pending_logical_op = LogicalOp::from_str(&s);
-                }
-            }
+            Rule::memory_type => s.memory_type = memory(item)?,
+            Rule::payload => s.payload = payload(item)?,
+            Rule::modifier => modifier(item, &mut s.modifiers)?,
+            _ => {}
         }
     }
-
-    Ok(conditions)
+    Ok(s)
 }
 
-/// Parse a condition atom (either a parenthesized group or a simple condition)
-/// Returns a single Condition (either Simple or Group)
-fn parse_condition_atom(pair: pest::iterators::Pair<Rule>) -> ParseResult<Condition> {
-    let inner = pair.into_inner().next();
-    match inner {
-        Some(item) => match item.as_rule() {
-            Rule::paren_condition => parse_paren_condition(item),
-            Rule::simple_condition => parse_simple_condition(item),
-            _ => Err(ParseError::UnexpectedRule(format!("in condition_atom: {:?}", item.as_rule()))),
-        },
-        None => Err(ParseError::Empty),
-    }
-}
-
-/// Parse a parenthesized condition group - returns a Group condition
-fn parse_paren_condition(pair: pest::iterators::Pair<Rule>) -> ParseResult<Condition> {
-    // paren_condition = { "(" ~ condition_list ~ ")" }
-    // Returns a Group condition containing the nested conditions
+fn update(pair: P) -> ParseResult<UpdateStmt> {
+    let mut u = UpdateStmt { memory_type: MemoryType::All, conditions: Vec::new(), payload: Vec::new(), modifiers: Modifiers::default() };
     for item in pair.into_inner() {
-        if item.as_rule() == Rule::condition_list {
-            let conditions = parse_condition_list(item)?;
-            return Ok(Condition::Group {
-                conditions,
-                logical_op: None, // Will be set by caller
-            });
+        match item.as_rule() {
+            Rule::memory_type => u.memory_type = memory(item)?,
+            Rule::where_pred => u.conditions = conditions(first(item)?)?,
+            Rule::payload => u.payload = payload(item)?,
+            Rule::modifier => modifier(item, &mut u.modifiers)?,
+            _ => {}
         }
     }
-    Ok(Condition::Group {
-        conditions: vec![],
-        logical_op: None,
-    })
+    Ok(u)
 }
 
-/// Parse a simple condition (field op value)
-fn parse_simple_condition(pair: pest::iterators::Pair<Rule>) -> ParseResult<Condition> {
-    let mut inner = pair.into_inner();
-
-    let field = inner
-        .next()
-        .ok_or(ParseError::Missing("field"))?
-        .as_str()
-        .to_string();
-    let operator = parse_operator(inner.next().ok_or(ParseError::Missing("operator"))?)?;
-    let value = parse_value(inner.next().ok_or(ParseError::Missing("value"))?)?;
-
-    Ok(Condition::Simple {
-        field,
-        operator,
-        value,
-        logical_op: None, // Will be set by parse_condition_list
-    })
-}
-
-/// Parse operator
-fn parse_operator(pair: pest::iterators::Pair<Rule>) -> ParseResult<Operator> {
-    Operator::from_str(pair.as_str())
-        .ok_or_else(|| ParseError::InvalidOperator(pair.as_str().to_string()))
-}
-
-/// Parse value
-fn parse_value(pair: pest::iterators::Pair<Rule>) -> ParseResult<Value> {
-    let inner = pair.into_inner().next().ok_or(ParseError::Empty)?;
-
-    match inner.as_rule() {
-        Rule::null_literal => Ok(Value::Null),
-        Rule::bool_literal => {
-            let b = inner.as_str().eq_ignore_ascii_case("true");
-            Ok(Value::Bool(b))
+fn forget(pair: P) -> ParseResult<ForgetStmt> {
+    let mut f = ForgetStmt { memory_type: MemoryType::All, conditions: Vec::new(), modifiers: Modifiers::default() };
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::memory_type => f.memory_type = memory(item)?,
+            Rule::where_pred => f.conditions = conditions(first(item)?)?,
+            Rule::modifier => modifier(item, &mut f.modifiers)?,
+            _ => {}
         }
-        Rule::float_literal => {
-            let f: f64 = inner
-                .as_str()
-                .parse()
-                .map_err(|_| ParseError::InvalidFloat(inner.as_str().to_string()))?;
-            Ok(Value::Float(f))
-        }
-        Rule::integer_literal => {
-            let i: i64 = inner
-                .as_str()
-                .parse()
-                .map_err(|_| ParseError::InvalidInteger(inner.as_str().to_string()))?;
-            Ok(Value::Int(i))
-        }
-        Rule::string_literal => Ok(Value::String(parse_string_literal(inner)?)),
-        Rule::variable => Ok(Value::Variable(parse_variable_name(inner)?)),
-        Rule::array_literal => {
-            let values: ParseResult<Vec<Value>> = inner.into_inner().map(parse_value).collect();
-            Ok(Value::Array(values?))
-        }
-        _ => Err(ParseError::UnexpectedRule(format!("{:?}", inner.as_rule()))),
     }
+    Ok(f)
 }
 
-/// Parse payload
-fn parse_payload(pair: pest::iterators::Pair<Rule>) -> ParseResult<Vec<FieldAssignment>> {
-    pair.into_inner().map(parse_field_assignment).collect()
-}
-
-/// Parse field assignment
-fn parse_field_assignment(pair: pest::iterators::Pair<Rule>) -> ParseResult<FieldAssignment> {
-    let mut inner = pair.into_inner();
-
-    let field = inner
-        .next()
-        .ok_or(ParseError::Missing("field"))?
-        .as_str()
-        .to_string();
-    let value = parse_value(inner.next().ok_or(ParseError::Missing("value"))?)?;
-
-    Ok(FieldAssignment { field, value })
-}
-
-/// Parse modifier into modifiers struct
-fn parse_modifier_into(
-    pair: pest::iterators::Pair<Rule>,
-    mods: &mut Modifiers,
-) -> ParseResult<()> {
-    let inner = pair.into_inner().next().ok_or(ParseError::Empty)?;
-
-    match inner.as_rule() {
-        Rule::limit_mod => {
-            let n = parse_integer(inner.into_inner().next().ok_or(ParseError::Empty)?)?;
-            mods.limit = Some(n as usize);
+/// `FROM <memory> WHERE … INTO <memory> WHERE …`
+fn ends(pair: P) -> ParseResult<(MemoryType, Vec<Condition>, MemoryType, Vec<Condition>)> {
+    let mut types = Vec::new();
+    let mut conds = Vec::new();
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::memory_type => types.push(memory(item)?),
+            Rule::where_pred => conds.push(conditions(first(item)?)?),
+            _ => {}
         }
-        Rule::order_mod => {
-            let mut parts = inner.into_inner();
-            let field = parts
-                .next()
-                .ok_or(ParseError::Missing("field"))?
-                .as_str()
-                .to_string();
-            // order_direction rule captures ASC or DESC
-            let ascending = parts
-                .next()
-                .map(|p| !p.as_str().eq_ignore_ascii_case("DESC"))
-                .unwrap_or(true);
-            mods.order_by = Some(OrderBy { field, ascending });
-        }
-        Rule::return_mod => {
-            let fields: Vec<String> = inner
-                .into_inner()
-                .map(|p| p.as_str().to_string())
-                .collect();
-            mods.return_fields = Some(fields);
-        }
-        Rule::timeout_mod => {
-            mods.timeout = Some(parse_duration_from_mod(inner)?);
-        }
-        Rule::in_scope_mod => {
-            mods.in_scope = Some(parse_in_scope(inner)?);
-        }
-        Rule::min_confidence_mod => {
-            let f = parse_float(inner.into_inner().next().ok_or(ParseError::Empty)?)?;
-            mods.min_confidence = Some(f);
-        }
-        Rule::scope_mod => {
-            // scope_value rule captures private, shared, or cluster
-            let scope_pair = inner
-                .into_inner()
-                .next()
-                .ok_or(ParseError::Missing("scope value"))?;
-            let scope_str = scope_pair.as_str();
-            let scope = match scope_str.to_lowercase().as_str() {
-                "private" => Scope::Private,
-                "shared" => Scope::Shared,
-                "cluster" => Scope::Cluster,
-                _ => return Err(ParseError::InvalidScope(scope_str.to_string())),
-            };
-            mods.scope = Some(scope);
-        }
-        Rule::namespace_mod => {
-            let ns =
-                parse_string_literal(inner.into_inner().next().ok_or(ParseError::Empty)?)?;
-            mods.namespace = Some(ns);
-        }
-        Rule::branch_mod => {
-            let b = parse_string_literal(inner.into_inner().next().ok_or(ParseError::Empty)?)?;
-            mods.branch = Some(b);
-        }
-        Rule::ttl_mod => {
-            mods.ttl = Some(parse_duration_from_mod(inner)?);
-        }
-        Rule::aggregate_mod => {
-            let funcs: ParseResult<Vec<AggregateFunc>> =
-                inner.into_inner().map(parse_aggregate_func).collect();
-            mods.aggregate = Some(funcs?);
-        }
-        Rule::group_by_mod => {
-            mods.group_by = Some(inner.into_inner().map(|f| f.as_str().to_string()).collect());
-        }
-        Rule::having_mod => {
-            let conditions =
-                parse_condition_list(inner.into_inner().next().ok_or(ParseError::Empty)?)?;
-            mods.having = Some(conditions);
-        }
-        Rule::with_links_mod => {
-            mods.with_links = Some(parse_with_links(inner)?);
-        }
-        Rule::follow_links_mod => {
-            mods.follow_links = Some(parse_follow_links(inner)?);
-        }
-        Rule::window_mod => {
-            mods.window = Some(parse_window(inner)?);
-        }
-        Rule::as_of_mod => {
-            mods.as_of = Some(parse_time_point(inner.into_inner().next().ok_or(ParseError::Missing("time"))?)?);
-        }
-        Rule::valid_at_mod => {
-            mods.valid_at = Some(parse_time_point(inner.into_inner().next().ok_or(ParseError::Missing("time"))?)?);
-        }
-        Rule::with_history_mod => {
-            mods.with_history = true;
-        }
-        _ => {}
     }
-
-    Ok(())
+    let (Some(to_c), Some(from_c)) = (conds.pop(), conds.pop()) else { return Err(ParseError::Missing("the link's ends")) };
+    let (Some(to_t), Some(from_t)) = (types.pop(), types.pop()) else { return Err(ParseError::Missing("the link's ends")) };
+    Ok((from_t, from_c, to_t, to_c))
 }
 
-/// Parse aggregate function
-fn parse_aggregate_func(pair: pest::iterators::Pair<Rule>) -> ParseResult<AggregateFunc> {
-    let mut inner = pair.into_inner();
+fn link(pair: P) -> ParseResult<LinkStmt> {
+    let mut l = LinkStmt {
+        from_type: MemoryType::All,
+        from_conditions: Vec::new(),
+        to_type: MemoryType::All,
+        to_conditions: Vec::new(),
+        link_type: String::new(),
+        weight: None,
+        namespace: None,
+    };
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::link_ends => (l.from_type, l.from_conditions, l.to_type, l.to_conditions) = ends(item)?,
+            Rule::string_literal => l.link_type = string(item)?,
+            Rule::number => l.weight = Some(number(item)?),
+            Rule::namespace_mod => l.namespace = Some(one_namespace(item)?),
+            _ => {}
+        }
+    }
+    Ok(l)
+}
 
-    let func_name = inner.next().ok_or(ParseError::Missing("function name"))?;
-    let func = AggregateFuncType::from_str(func_name.as_str())
-        .ok_or_else(|| ParseError::InvalidAggregateFunc(func_name.as_str().to_string()))?;
+fn unlink(pair: P) -> ParseResult<UnlinkStmt> {
+    let mut u = UnlinkStmt {
+        from_type: MemoryType::All,
+        from_conditions: Vec::new(),
+        to_type: MemoryType::All,
+        to_conditions: Vec::new(),
+        link_type: None,
+        namespace: None,
+    };
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::link_ends => (u.from_type, u.from_conditions, u.to_type, u.to_conditions) = ends(item)?,
+            Rule::string_literal => u.link_type = Some(string(item)?),
+            Rule::namespace_mod => u.namespace = Some(one_namespace(item)?),
+            _ => {}
+        }
+    }
+    Ok(u)
+}
 
-    // The next element could be field_path (for fields) or agg_alias (when using *)
-    // because * is a literal that doesn't appear in the parse tree
-    let mut field = None;
-    let mut alias = None;
+/// `FROM "a" INTO "b"`
+fn from_into(pair: P) -> ParseResult<(String, String)> {
+    let mut it = pair.into_inner();
+    let from = string(it.next().ok_or(ParseError::Missing("FROM namespace"))?)?;
+    let into = string(it.next().ok_or(ParseError::Missing("INTO namespace"))?)?;
+    Ok((from, into))
+}
 
-    for p in inner {
-        match p.as_rule() {
-            Rule::field_path => {
-                field = Some(p.as_str().to_string());
-            }
-            Rule::agg_alias => {
-                // agg_alias contains the identifier after AS
-                alias = p.into_inner()
-                    .find(|inner_p| inner_p.as_rule() == Rule::identifier)
-                    .map(|inner_p| inner_p.as_str().to_string());
+fn namespace_stmt(pair: P) -> ParseResult<NamespaceStmt> {
+    let mut n = NamespaceStmt { from: String::new(), into: String::new(), as_of: None };
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::ns_from_into => (n.from, n.into) = from_into(item)?,
+            Rule::as_of_mod => n.as_of = Some(time_point(first(item)?)?),
+            _ => {}
+        }
+    }
+    Ok(n)
+}
+
+fn merge(pair: P) -> ParseResult<MergeStmt> {
+    let mut m = MergeStmt { from: String::new(), into: String::new(), prefer: None };
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::ns_from_into => (m.from, m.into) = from_into(item)?,
+            Rule::prefer_clause => {
+                m.prefer = Some(match first(item)?.as_rule() {
+                    Rule::prefer_source => Prefer::Source,
+                    _ => Prefer::Target,
+                })
             }
             _ => {}
         }
     }
-
-    Ok(AggregateFunc { func, field, alias })
+    Ok(m)
 }
 
-/// The parts of a v0.8 link selection: `ALL` / `TYPE "t"` / `TYPE IN (...)`, the
-/// direction and `MIN_WEIGHT`, in any of WITH / FOLLOW LINKS.
-#[derive(Default)]
-struct LinkParts {
-    link_type: Option<String>,
-    link_types: Vec<String>,
-    direction: LinkDirection,
-    min_weight: Option<f64>,
-    depth: Option<u32>,
-}
-
-fn parse_link_parts(pair: pest::iterators::Pair<Rule>) -> ParseResult<LinkParts> {
-    let mut parts = LinkParts::default();
-    for p in pair.into_inner() {
-        match p.as_rule() {
-            Rule::link_select => {
-                let sel = p.into_inner().next().ok_or(ParseError::Missing("link type"))?;
-                match sel.as_rule() {
-                    Rule::link_type_one => {
-                        let lit = sel.into_inner().next().ok_or(ParseError::Missing("link type"))?;
-                        parts.link_type = Some(parse_string_literal(lit)?);
-                    }
-                    Rule::link_types_in => {
-                        parts.link_types = sel.into_inner().map(parse_string_literal).collect::<ParseResult<_>>()?;
-                    }
+fn subscribe(pair: P) -> ParseResult<SubscribeStmt> {
+    let inner = first(pair)?;
+    match inner.as_rule() {
+        Rule::recall_stmt => Ok(SubscribeStmt { target: SubscribeTarget::Query(Box::new(recall(inner)?)), filter: None, namespace: None }),
+        _ => {
+            let mut s = SubscribeStmt { target: SubscribeTarget::Topic(String::new()), filter: None, namespace: None };
+            for item in inner.into_inner() {
+                match item.as_rule() {
+                    Rule::topic_target => s.target = SubscribeTarget::Topic(string(first(item)?)?),
+                    Rule::where_pred => s.filter = Some(conditions(first(item)?)?),
+                    Rule::namespace_mod => s.namespace = Some(one_namespace(item)?),
                     _ => {}
                 }
             }
-            Rule::link_direction => {
-                parts.direction = match p.as_str().to_ascii_uppercase().as_str() {
-                    "INBOUND" => LinkDirection::Inbound,
-                    "BOTH" => LinkDirection::Both,
-                    _ => LinkDirection::Outbound,
-                };
-            }
-            Rule::min_weight_mod => {
-                let n = p.into_inner().next().ok_or(ParseError::Missing("MIN_WEIGHT value"))?;
-                parts.min_weight = Some(n.as_str().parse().map_err(|_| ParseError::Missing("MIN_WEIGHT number"))?);
-            }
-            Rule::integer_literal => parts.depth = Some(parse_integer(p)? as u32),
+            Ok(s)
+        }
+    }
+}
+
+fn unsubscribe(pair: P) -> ParseResult<UnsubscribeStmt> {
+    let mut u = UnsubscribeStmt { subscription: String::new(), namespace: None };
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::handle => u.subscription = handle(item)?,
+            Rule::namespace_mod => u.namespace = Some(one_namespace(item)?),
             _ => {}
         }
     }
-    Ok(parts)
+    Ok(u)
 }
 
-/// Parse WITH LINKS modifier
-fn parse_with_links(pair: pest::iterators::Pair<Rule>) -> ParseResult<WithLinks> {
-    let LinkParts { link_type, link_types, direction, min_weight, .. } = parse_link_parts(pair)?;
-    Ok(match link_type {
-        Some(link_type) => WithLinks::Type { link_type, direction, min_weight },
-        None if !link_types.is_empty() => WithLinks::Types { link_types, direction, min_weight },
-        None => WithLinks::All { direction, min_weight },
-    })
-}
-
-/// Parse FOLLOW LINKS modifier
-fn parse_follow_links(pair: pest::iterators::Pair<Rule>) -> ParseResult<FollowLinks> {
-    let LinkParts { link_type, link_types, direction, min_weight, depth } = parse_link_parts(pair)?;
-    Ok(FollowLinks { link_type, link_types, direction, min_weight, depth })
-}
-
-/// Parse WINDOW modifier
-fn parse_window(pair: pest::iterators::Pair<Rule>) -> ParseResult<Window> {
-    let mut inner = pair.into_inner();
-
-    let first = inner.next().ok_or(ParseError::Empty)?;
-
-    match first.as_rule() {
-        Rule::duration_literal => {
-            let duration = parse_duration(first)?;
-            Ok(Window::LastDuration { duration })
-        }
-        Rule::integer_literal => {
-            let count = parse_integer(first)? as usize;
-            // Check if there's a BY clause (for TOP)
-            if let Some(by_field) = inner.next() {
-                Ok(Window::TopBy {
-                    count,
-                    field: by_field.as_str().to_string(),
-                })
-            } else {
-                Ok(Window::LastN { count })
-            }
-        }
-        Rule::simple_condition => {
-            let condition = parse_simple_condition(first)?;
-            Ok(Window::Since { condition })
-        }
-        _ => Err(ParseError::UnexpectedRule(format!("{:?}", first.as_rule()))),
-    }
-}
-
-// ============================================================================
-// v0.6: subscriptions and continuous queries
-// ============================================================================
-
-/// Parse IN SCOPE "..." (named scope)
-fn parse_in_scope(pair: pest::iterators::Pair<Rule>) -> ParseResult<String> {
-    let lit = pair
-        .into_inner()
-        .find(|p| p.as_rule() == Rule::string_literal)
-        .ok_or(ParseError::Missing("scope"))?;
-    parse_string_literal(lit)
-}
-
-/// Parse a subscription / continuous-query id (string, variable or identifier)
-fn parse_handle(pair: pest::iterators::Pair<Rule>) -> ParseResult<String> {
-    let inner = pair.into_inner().next().ok_or(ParseError::Missing("id"))?;
-    match inner.as_rule() {
-        Rule::string_literal => parse_string_literal(inner),
-        _ => Ok(inner.as_str().to_string()),
-    }
-}
-
-/// Parse FROM NOW | FROM OFFSET n
-fn parse_start(pair: pest::iterators::Pair<Rule>) -> ParseResult<StartPosition> {
-    let inner = pair.into_inner().next().ok_or(ParseError::Missing("start position"))?;
-    match inner.as_rule() {
-        Rule::from_offset => {
-            let n = parse_integer(inner.into_inner().next().ok_or(ParseError::Missing("offset"))?)?;
-            Ok(StartPosition::Offset(n.max(0) as u64))
-        }
-        _ => Ok(StartPosition::Now),
-    }
-}
-
-/// Parse SCOPE "..." | TOPIC "..." target
-fn parse_target(pair: pest::iterators::Pair<Rule>) -> ParseResult<SubscribeTarget> {
-    let (rule, lit) = match pair.as_rule() {
-        Rule::subscribe_target => {
-            let t = pair.into_inner().next().ok_or(ParseError::Missing("scope or topic"))?;
-            let rule = t.as_rule();
-            (rule, t.into_inner().next().ok_or(ParseError::Missing("name"))?)
-        }
-        rule => (rule, pair.into_inner().next().ok_or(ParseError::Missing("name"))?),
-    };
-    let name = parse_string_literal(lit)?;
-    Ok(match rule {
-        Rule::topic_target => SubscribeTarget::Topic(name),
-        _ => SubscribeTarget::Scope(name),
-    })
-}
-
-/// Parse SUBSCRIBE statement
-fn parse_subscribe(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut target = None;
-    let mut kinds = Vec::new();
-    let mut filter = None;
-    let mut start = StartPosition::Now;
-    let mut namespace = None;
+fn publish(pair: P) -> ParseResult<PublishStmt> {
+    let mut p = PublishStmt { topic: String::new(), payload: Vec::new(), modifiers: Modifiers::default() };
     for item in pair.into_inner() {
         match item.as_rule() {
-            Rule::namespace_mod => namespace = Some(parse_namespace_mod(item)?),
-            Rule::subscribe_target => target = Some(parse_target(item)?),
-            Rule::kinds_clause => {
-                kinds = item.into_inner().map(|k| k.as_str().to_ascii_lowercase()).collect();
-            }
-            Rule::where_pred => {
-                let list = item.into_inner().next().ok_or(ParseError::Missing("conditions"))?;
-                filter = Some(parse_condition_list(list)?);
-            }
-            Rule::start_clause => start = parse_start(item)?,
+            Rule::topic_target => p.topic = string(first(item)?)?,
+            Rule::payload => p.payload = payload(item)?,
+            Rule::modifier => modifier(item, &mut p.modifiers)?,
             _ => {}
         }
     }
-    Ok(Statement::Subscribe(SubscribeStmt {
-        target: target.ok_or(ParseError::Missing("scope or topic"))?,
-        kinds,
-        filter,
-        start,
-        namespace,
-    }))
+    Ok(p)
 }
 
-/// `NAMESPACE "<ns>"` / `BRANCH "<b>"` (a `namespace_mod` / `branch_mod`): the name.
-fn parse_namespace_mod(pair: pest::iterators::Pair<Rule>) -> ParseResult<String> {
-    parse_string_literal(pair.into_inner().next().ok_or(ParseError::Empty)?)
-}
+// ---------------------------------------------------------------- validation
 
-/// Parse UNSUBSCRIBE statement
-fn parse_unsubscribe(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut inner = pair.into_inner();
-    let handle = inner.next().ok_or(ParseError::Missing("subscription id"))?;
-    let namespace = inner.next().map(parse_namespace_mod).transpose()?;
-    Ok(Statement::Unsubscribe(UnsubscribeStmt { subscription: parse_handle(handle)?, namespace }))
-}
-
-/// Parse ACK statement
-fn parse_ack(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut inner = pair.into_inner();
-    let subscription = parse_handle(inner.next().ok_or(ParseError::Missing("subscription id"))?)?;
-    let offset = parse_integer(inner.next().ok_or(ParseError::Missing("offset"))?)?;
-    let namespace = inner.next().map(parse_namespace_mod).transpose()?;
-    Ok(Statement::Ack(AckStmt { subscription, offset: offset.max(0) as u64, namespace }))
-}
-
-/// Parse PUBLISH statement
-fn parse_publish(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut topic = None;
-    let mut payload = Vec::new();
-    let mut modifiers = Modifiers::default();
-    for item in pair.into_inner() {
-        match item.as_rule() {
-            Rule::topic_target => {
-                if let SubscribeTarget::Topic(t) = parse_target(item)? {
-                    topic = Some(t);
+/// What the grammar doesn't say (spec §8): HAVING and GROUP BY need AGGREGATE;
+/// FORGET FROM ALL without WHERE names its NAMESPACE; BRANCH / FORK / MERGE name two
+/// different namespaces; a pipeline writes only in its last stage.
+fn validate(stmt: &Statement) -> ParseResult<()> {
+    let bad = |m: &str| Err(ParseError::Validation(m.into()));
+    match stmt {
+        Statement::Pipeline(p) => {
+            for (i, s) in p.stages.iter().enumerate() {
+                if i + 1 < p.stages.len() && !matches!(s, Statement::Recall(_)) {
+                    return bad("only a pipeline's last stage may write (STORE or UPDATE)");
                 }
+                validate(s)?;
             }
-            Rule::payload => payload = parse_payload(item)?,
-            Rule::modifier => parse_modifier_into(item, &mut modifiers)?,
-            _ => {}
+            Ok(())
+        }
+        Statement::Store(StoreStmt { memory_type: MemoryType::All, .. }) | Statement::Update(UpdateStmt { memory_type: MemoryType::All, .. }) => {
+            bad("STORE and UPDATE name one memory type, not ALL")
+        }
+        Statement::Link(LinkStmt { from_type, to_type, .. }) | Statement::Unlink(UnlinkStmt { from_type, to_type, .. })
+            if *from_type == MemoryType::All || *to_type == MemoryType::All =>
+        {
+            bad("a link's ends are in one memory type each, not ALL")
+        }
+        Statement::Store(StoreStmt { modifiers: m, .. }) | Statement::Update(UpdateStmt { modifiers: m, .. }) | Statement::Forget(ForgetStmt { modifiers: m, .. }) | Statement::Publish(PublishStmt { modifiers: m, .. })
+            if !m.namespaces.is_empty() =>
+        {
+            bad("NAMESPACE (…) lists namespaces to read; a write is in one namespace")
+        }
+        Statement::Recall(r) => aggregates(&r.modifiers),
+        Statement::Subscribe(SubscribeStmt { target: SubscribeTarget::Query(r), .. }) => aggregates(&r.modifiers),
+        Statement::Forget(f) if f.conditions.is_empty() && f.modifiers.namespace.is_none() => {
+            bad("FORGET without WHERE forgets everything: name its NAMESPACE")
+        }
+        Statement::Branch(n) | Statement::Fork(n) if n.from == n.into || n.from.is_empty() || n.into.is_empty() => {
+            bad("BRANCH / FORK need two different namespaces")
+        }
+        Statement::Merge(m) if m.from == m.into || m.from.is_empty() || m.into.is_empty() => bad("MERGE needs two different namespaces"),
+        Statement::Use(ns) if ns.is_empty() => bad("USE names a namespace"),
+        _ => Ok(()),
+    }
+}
+
+fn aggregates(m: &Modifiers) -> ParseResult<()> {
+    if m.aggregate.is_none() {
+        if m.having.is_some() {
+            return Err(ParseError::Validation("HAVING requires AGGREGATE".into()));
+        }
+        if m.group_by.is_some() {
+            return Err(ParseError::Validation("GROUP BY requires AGGREGATE".into()));
         }
     }
-    Ok(Statement::Publish(PublishStmt {
-        topic: topic.ok_or(ParseError::Missing("topic"))?,
-        payload,
-        modifiers,
-    }))
+    Ok(())
 }
 
-/// Parse WATCH statement
-fn parse_watch(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let mut query = None;
-    let mut debounce = None;
-    let mut start = StartPosition::Now;
-    for item in pair.into_inner() {
-        match item.as_rule() {
-            Rule::watch_query => {
-                let stmt = item.into_inner().next().ok_or(ParseError::Missing("query"))?;
-                query = Some(parse_statement_inner(stmt)?);
-            }
-            Rule::debounce_clause => debounce = Some(parse_duration_from_mod(item)?),
-            Rule::start_clause => start = parse_start(item)?,
-            _ => {}
-        }
-    }
-    Ok(Statement::Watch(WatchStmt {
-        query: Box::new(query.ok_or(ParseError::Missing("query"))?),
-        debounce,
-        start,
-    }))
-}
+// ---------------------------------------------------------------- modifiers
 
-/// Parse UNWATCH statement
-fn parse_unwatch(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
-    let handle = pair.into_inner().next().ok_or(ParseError::Missing("query id"))?;
-    Ok(Statement::Unwatch(UnwatchStmt { query_id: parse_handle(handle)? }))
-}
-
-/// Parse duration from modifier
-fn parse_duration_from_mod(pair: pest::iterators::Pair<Rule>) -> ParseResult<Duration> {
-    let inner = pair.into_inner().next().ok_or(ParseError::Empty)?;
-    parse_duration(inner)
-}
-
-/// Parse duration literal
-fn parse_duration(pair: pest::iterators::Pair<Rule>) -> ParseResult<Duration> {
-    let s = pair.as_str();
-
-    // Find where the number ends
-    let num_end = s
-        .char_indices()
-        .find(|(_, c)| !c.is_ascii_digit())
-        .map(|(i, _)| i)
-        .unwrap_or(s.len());
-
-    let num: u64 = s[..num_end]
-        .parse()
-        .map_err(|_| ParseError::InvalidDuration(s.to_string()))?;
-    let unit = &s[num_end..];
-
-    let duration = match unit {
-        "ms" => Duration::from_millis(num),
-        "s" => Duration::from_secs(num),
-        "m" => Duration::from_secs(num * 60),
-        "h" => Duration::from_secs(num * 3600),
-        "d" => Duration::from_secs(num * 86400),
-        _ => return Err(ParseError::InvalidDuration(s.to_string())),
-    };
-
-    Ok(duration)
-}
-
-/// Parse string literal (remove quotes)
-fn parse_string_literal(pair: pest::iterators::Pair<Rule>) -> ParseResult<String> {
-    let s = pair.as_str();
-    // Remove surrounding quotes
-    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
-        let inner = &s[1..s.len() - 1];
-        // Handle escape sequences
-        let mut result = String::new();
-        let mut chars = inner.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '\\' {
-                if let Some(escaped) = chars.next() {
-                    match escaped {
-                        'n' => result.push('\n'),
-                        't' => result.push('\t'),
-                        'r' => result.push('\r'),
-                        '\\' => result.push('\\'),
-                        '"' => result.push('"'),
-                        other => {
-                            result.push('\\');
-                            result.push(other);
-                        }
+fn modifier(pair: P, m: &mut Modifiers) -> ParseResult<()> {
+    let item = first(pair)?;
+    match item.as_rule() {
+        Rule::namespace_mod => {
+            let v = first(item)?;
+            match v.as_rule() {
+                Rule::namespace_list => {
+                    let mut list = v.into_inner().map(string).collect::<ParseResult<Vec<_>>>()?;
+                    list.dedup();
+                    match list.len() {
+                        1 => m.namespace = list.pop(),
+                        _ => m.namespaces = list,
                     }
                 }
-            } else {
-                result.push(c);
+                _ => m.namespace = Some(string(v)?),
             }
         }
-        Ok(result)
-    } else {
-        Ok(s.to_string())
+        Rule::in_scope_mod => m.in_scope = Some(string(first(item)?)?),
+        Rule::limit_mod => m.limit = Some(integer(first(item)?)?.max(0) as usize),
+        Rule::order_mod => {
+            let mut it = item.into_inner();
+            let field = it.next().ok_or(ParseError::Missing("ORDER BY field"))?.as_str().to_string();
+            let ascending = it.next().is_none_or(|d| !d.as_str().eq_ignore_ascii_case("DESC"));
+            m.order_by = Some(OrderBy { field, ascending });
+        }
+        Rule::return_mod => m.return_fields = Some(item.into_inner().map(|f| f.as_str().to_string()).collect()),
+        Rule::ttl_mod => m.ttl = Some(duration(first(item)?)?),
+        Rule::confidence_mod => m.confidence = Some(number(first(item)?)? as f32),
+        Rule::aggregate_mod => m.aggregate = Some(item.into_inner().map(aggregate).collect::<ParseResult<_>>()?),
+        Rule::group_by_mod => m.group_by = Some(item.into_inner().map(|f| f.as_str().to_string()).collect()),
+        Rule::having_mod => m.having = Some(conditions(first(item)?)?),
+        Rule::window_mod => {
+            let v = first(item)?;
+            m.window = Some(match v.as_rule() {
+                Rule::duration_literal => Window::LastDuration { duration: duration(v)? },
+                _ => Window::LastN { count: integer(v)?.max(0) as usize },
+            });
+        }
+        Rule::with_links_mod => m.with_links = Some(link_select(item.into_inner())?),
+        Rule::follow_links_mod => {
+            let mut depth = None;
+            let mut parts = Vec::new();
+            for p in item.into_inner() {
+                match p.as_rule() {
+                    Rule::integer_literal => depth = Some(integer(p)?.max(0) as u32),
+                    _ => parts.push(p),
+                }
+            }
+            m.follow_links = Some(FollowLinks { select: link_select(parts.into_iter())?, depth });
+        }
+        Rule::as_of_mod => m.as_of = Some(time_point(first(item)?)?),
+        Rule::with_history_mod => {
+            let mut points = item.into_inner().map(time_point).collect::<ParseResult<Vec<_>>>()?;
+            let between = match (points.pop(), points.pop()) {
+                (Some(to), Some(from)) => Some((from, to)),
+                _ => None,
+            };
+            m.with_history = Some(History { between });
+        }
+        r => return Err(ParseError::UnexpectedRule(format!("{r:?}"))),
+    }
+    Ok(())
+}
+
+/// A statement-level NAMESPACE (links, topics): one namespace, not a list.
+fn one_namespace(pair: P) -> ParseResult<String> {
+    let v = first(pair)?;
+    match v.as_rule() {
+        Rule::namespace_list => Err(ParseError::Validation("NAMESPACE (…) lists namespaces to read; this statement is in one namespace".into())),
+        _ => string(v),
     }
 }
 
-/// Parse variable name (remove $ or {})
-/// Parse a time point (v0.10): `"2026-10-01"`, `$t` or `7d AGO`.
-fn parse_time_point(pair: pest::iterators::Pair<Rule>) -> ParseResult<TimePoint> {
-    let inner = pair.into_inner().next().ok_or(ParseError::Missing("time"))?;
-    match inner.as_rule() {
-        Rule::time_ago => Ok(TimePoint::Ago {
-            duration: parse_duration(inner.into_inner().next().ok_or(ParseError::Missing("duration"))?)?,
-        }),
-        Rule::variable => Ok(TimePoint::Variable { name: parse_variable_name(inner)? }),
-        _ => Ok(TimePoint::At { time: parse_string_literal(inner)? }),
+fn link_select<'a>(parts: impl Iterator<Item = P<'a>>) -> ParseResult<LinkSelect> {
+    let mut s = LinkSelect::default();
+    for p in parts {
+        match p.as_rule() {
+            Rule::link_types => s.types = p.into_inner().map(string).collect::<ParseResult<_>>()?,
+            Rule::weight_min => s.min_weight = Some(number(first(p)?)?),
+            _ => {}
+        }
     }
+    Ok(s)
 }
 
-fn parse_variable_name(pair: pest::iterators::Pair<Rule>) -> ParseResult<String> {
+fn aggregate(pair: P) -> ParseResult<AggregateFunc> {
+    let mut func = None;
+    let mut field = None;
+    let mut alias = None;
+    for p in pair.into_inner() {
+        match p.as_rule() {
+            Rule::agg_func_name => func = AggregateFuncType::from_str(p.as_str()),
+            Rule::field_path => field = Some(p.as_str().to_string()),
+            Rule::agg_alias => alias = p.into_inner().find(|i| i.as_rule() == Rule::identifier).map(|i| i.as_str().to_string()),
+            _ => {}
+        }
+    }
+    Ok(AggregateFunc { func: func.ok_or(ParseError::Missing("aggregate function"))?, field, alias })
+}
+
+// ---------------------------------------------------------------- conditions
+
+fn conditions(pair: P) -> ParseResult<Vec<Condition>> {
+    let mut out = Vec::new();
+    let mut op = None;
+    for p in pair.into_inner() {
+        match p.as_rule() {
+            Rule::logical_op => op = LogicalOp::from_str(p.as_str()),
+            Rule::condition_atom => {
+                let a = first(p)?;
+                let mut c = match a.as_rule() {
+                    Rule::paren_condition => Condition::group(conditions(first(a)?)?),
+                    _ => simple(a)?,
+                };
+                c.set_logical_op(op.take());
+                out.push(c);
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
+fn simple(pair: P) -> ParseResult<Condition> {
+    let mut it = pair.into_inner();
+    let field = it.next().ok_or(ParseError::Missing("field"))?.as_str().to_string();
+    let next = it.next().ok_or(ParseError::Missing("operator"))?;
+    Ok(match next.as_rule() {
+        Rule::between_op => {
+            let vals = next.into_inner().map(value).collect::<ParseResult<Vec<_>>>()?;
+            Condition::simple(field, Operator::Between, Value::Array(vals))
+        }
+        Rule::in_op => {
+            let v = first(next)?;
+            let list = match v.as_rule() {
+                Rule::value_list | Rule::array_literal => Value::Array(v.into_inner().map(value).collect::<ParseResult<_>>()?),
+                _ => Value::Variable(variable(v)),
+            };
+            Condition::simple(field, Operator::In, list)
+        }
+        _ => {
+            let op = Operator::from_str(next.as_str()).ok_or_else(|| ParseError::InvalidOperator(next.as_str().into()))?;
+            let v = value(it.next().ok_or(ParseError::Missing("value"))?)?;
+            Condition::simple(field, op, v)
+        }
+    })
+}
+
+fn payload(pair: P) -> ParseResult<Vec<FieldAssignment>> {
+    pair.into_inner()
+        .map(|a| {
+            let mut it = a.into_inner();
+            let field = it.next().ok_or(ParseError::Missing("field"))?.as_str().to_string();
+            let value = value(it.next().ok_or(ParseError::Missing("value"))?)?;
+            Ok(FieldAssignment { field, value })
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------- primitives
+
+fn first(pair: P) -> ParseResult<P> {
+    pair.into_inner().next().ok_or(ParseError::Empty)
+}
+
+fn memory(pair: P) -> ParseResult<MemoryType> {
+    MemoryType::from_str(pair.as_str()).ok_or_else(|| ParseError::InvalidMemoryType(pair.as_str().into()))
+}
+
+fn value(pair: P) -> ParseResult<Value> {
+    let p = if pair.as_rule() == Rule::value { first(pair)? } else { pair };
+    Ok(match p.as_rule() {
+        Rule::null_literal => Value::Null,
+        Rule::bool_literal => Value::Bool(p.as_str().eq_ignore_ascii_case("true")),
+        Rule::integer_literal => Value::Int(integer(p)?),
+        Rule::float_literal => Value::Float(p.as_str().parse().map_err(|_| ParseError::InvalidFloat(p.as_str().into()))?),
+        Rule::string_literal => Value::String(string(p)?),
+        Rule::variable => Value::Variable(variable(p)),
+        Rule::array_literal => Value::Array(p.into_inner().map(value).collect::<ParseResult<_>>()?),
+        r => return Err(ParseError::UnexpectedRule(format!("{r:?}"))),
+    })
+}
+
+fn number(pair: P) -> ParseResult<f64> {
+    let p = if pair.as_rule() == Rule::number { first(pair)? } else { pair };
+    p.as_str().parse().map_err(|_| ParseError::InvalidFloat(p.as_str().into()))
+}
+
+fn integer(pair: P) -> ParseResult<i64> {
+    pair.as_str().parse().map_err(|_| ParseError::InvalidInteger(pair.as_str().into()))
+}
+
+/// `$name` or `{name}`: the name.
+fn variable(pair: P) -> String {
     let s = pair.as_str();
-    if s.starts_with('{') && s.ends_with('}') {
-        Ok(s[1..s.len() - 1].to_string())
-    } else if s.starts_with('$') {
-        Ok(s[1..].to_string())
-    } else {
-        Ok(s.to_string())
+    s.strip_prefix('$').or_else(|| s.strip_prefix('{').and_then(|v| v.strip_suffix('}'))).unwrap_or(s).to_string()
+}
+
+fn handle(pair: P) -> ParseResult<String> {
+    let p = first(pair)?;
+    Ok(match p.as_rule() {
+        Rule::string_literal => string(p)?,
+        Rule::variable => format!("${}", variable(p)),
+        _ => p.as_str().to_string(),
+    })
+}
+
+fn time_point(pair: P) -> ParseResult<TimePoint> {
+    let p = if pair.as_rule() == Rule::time_point { first(pair)? } else { pair };
+    Ok(match p.as_rule() {
+        Rule::variable => TimePoint::Variable { name: variable(p) },
+        _ => TimePoint::At { time: string(p)? },
+    })
+}
+
+fn duration(pair: P) -> ParseResult<Duration> {
+    let s = pair.as_str();
+    let split = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    let n: u64 = s[..split].parse().map_err(|_| ParseError::InvalidDuration(s.into()))?;
+    Ok(match &s[split..] {
+        "ms" => Duration::from_millis(n),
+        "s" => Duration::from_secs(n),
+        "m" => Duration::from_secs(n * 60),
+        "h" => Duration::from_secs(n * 3600),
+        "d" => Duration::from_secs(n * 86_400),
+        _ => return Err(ParseError::InvalidDuration(s.into())),
+    })
+}
+
+fn string(pair: P) -> ParseResult<String> {
+    let s = pair.as_str();
+    let inner = s.strip_prefix('"').and_then(|v| v.strip_suffix('"')).ok_or_else(|| ParseError::Pest(format!("not a string: {s}")))?;
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some(other) => out.push(other),
+            None => {}
+        }
     }
-}
-
-/// Parse integer
-fn parse_integer(pair: pest::iterators::Pair<Rule>) -> ParseResult<i64> {
-    pair.as_str()
-        .parse()
-        .map_err(|_| ParseError::InvalidInteger(pair.as_str().to_string()))
-}
-
-/// Parse float
-fn parse_float(pair: pest::iterators::Pair<Rule>) -> ParseResult<f32> {
-    pair.as_str()
-        .parse()
-        .map_err(|_| ParseError::InvalidFloat(pair.as_str().to_string()))
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_v07_update_link_weight_spec_form() {
-        let s = parse(r#"UPDATE LINK FROM PROCEDURAL WHERE pattern_id = "oom-fix" TO EPISODIC WHERE incident_id = "inc-001" WEIGHT 0.99"#).unwrap();
-        let Statement::UpdateLink(u) = s else { panic!("{s:?}") };
-        assert_eq!((u.from_type, u.to_type), (MemoryType::Procedural, MemoryType::Episodic));
-        assert_eq!(u.link_type, None);
-        assert_eq!(u.weight, Some(0.99));
-        assert_eq!(u.new_type, None);
+    fn ok(q: &str) -> Statement {
+        parse(q).unwrap_or_else(|e| panic!("{q}: {e}"))
     }
-
-    #[test]
-    fn test_v07_update_link_type_filter_and_assignments() {
-        let s = parse(r#"UPDATE LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" TYPE "related" (type = "depends_on", weight = 1)"#).unwrap();
-        let Statement::UpdateLink(u) = s else { panic!("{s:?}") };
-        assert_eq!(u.link_type.as_deref(), Some("related"));
-        assert_eq!(u.new_type.as_deref(), Some("depends_on"));
-        assert_eq!(u.weight, Some(1.0));
-        let s = parse(r#"UPDATE LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" TYPE "related" WEIGHT 0.5"#).unwrap();
-        let Statement::UpdateLink(u) = s else { panic!("{s:?}") };
-        assert_eq!((u.link_type.as_deref(), u.weight), (Some("related"), Some(0.5)));
-    }
-
-    #[test]
-    fn test_v07_update_link_rejects_other_fields_and_nothing_to_set() {
-        assert!(parse(r#"UPDATE LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" (color = "red")"#).is_err());
-        assert!(parse(r#"UPDATE LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" TYPE "related""#).is_err());
-        // UPDATE INTO is unchanged.
-        assert!(matches!(parse(r#"UPDATE INTO SEMANTIC WHERE key = "a" (x = 1)"#).unwrap(), Statement::Update(_)));
-    }
-
-    #[test]
-    fn test_v07_unlink() {
-        let s = parse(r#"UNLINK FROM SEMANTIC WHERE key = "a" TO EPISODIC WHERE key = "e" TYPE "evidence""#).unwrap();
-        let Statement::Unlink(u) = s else { panic!("{s:?}") };
-        assert_eq!((u.from_type, u.to_type), (MemoryType::Semantic, MemoryType::Episodic));
-        assert_eq!(u.link_type.as_deref(), Some("evidence"));
-        let s = parse(r#"UNLINK FROM SEMANTIC WHERE key = "a" TO EPISODIC WHERE key = "e""#).unwrap();
-        let Statement::Unlink(u) = s else { panic!("{s:?}") };
-        assert_eq!(u.link_type, None, "no TYPE: every link between them");
-    }
-
-    #[test]
-    fn test_parse_scan() {
-        let stmt = parse("SCAN FROM WORKING").unwrap();
-        assert!(matches!(stmt, Statement::Scan(_)));
-    }
-
-    #[test]
-    fn test_parse_scan_with_window() {
-        let stmt = parse("SCAN FROM WORKING WINDOW LAST 10").unwrap();
-        if let Statement::Scan(s) = stmt {
-            assert!(matches!(s.window, Some(Window::LastN { count: 10 })));
-        } else {
-            panic!("Expected Scan statement");
+    fn recall_of(q: &str) -> RecallStmt {
+        match ok(q) {
+            Statement::Recall(r) => r,
+            other => panic!("{q}: {other:?}"),
         }
     }
 
     #[test]
-    fn test_parse_recall() {
-        let stmt = parse("RECALL FROM EPISODIC WHERE pod = \"payments\"").unwrap();
-        if let Statement::Recall(r) = stmt {
-            assert_eq!(r.memory_type, MemoryType::Episodic);
-            if let Predicate::Where { conditions } = r.predicate {
-                assert_eq!(conditions.len(), 1);
-                assert_eq!(conditions[0].field().unwrap(), "pod");
-            } else {
-                panic!("Expected Where predicate");
-            }
-        } else {
-            panic!("Expected Recall statement");
-        }
-    }
-
-    #[test]
-    fn test_parse_lookup_with_pattern() {
-        let stmt = parse("LOOKUP FROM PROCEDURAL PATTERN $log_events THRESHOLD 0.7").unwrap();
-        if let Statement::Lookup(l) = stmt {
-            assert_eq!(l.memory_type, MemoryType::Procedural);
-            if let Predicate::Pattern { variable, threshold, text } = l.predicate {
-                assert_eq!(variable, "log_events");
-                assert_eq!(threshold, Some(0.7));
-                assert_eq!(text, None);
-            } else {
-                panic!("Expected Pattern predicate");
-            }
-        } else {
-            panic!("Expected Lookup statement");
-        }
-    }
-
-    #[test]
-    fn test_parse_pattern_literal() {
-        let stmt = parse(r#"LOOKUP FROM PROCEDURAL PATTERN "pod OOMKilled" THRESHOLD 0.5"#).unwrap();
-        let Statement::Lookup(l) = stmt else { panic!("Expected Lookup statement") };
-        let Predicate::Pattern { variable, threshold, text } = l.predicate else { panic!("Expected Pattern predicate") };
-        assert_eq!(text.as_deref(), Some("pod OOMKilled"));
-        assert_eq!(variable, "pod OOMKilled");
-        assert_eq!(threshold, Some(0.5));
-    }
-
-    #[test]
-    fn test_parse_load_with_modifiers() {
-        let stmt = parse("LOAD FROM TOOLS WHERE task = \"bidding\" ORDER BY ranking DESC LIMIT 3")
-            .unwrap();
-        if let Statement::Load(l) = stmt {
-            assert_eq!(l.modifiers.limit, Some(3));
-            assert!(l.modifiers.order_by.is_some());
-            let order = l.modifiers.order_by.unwrap();
-            assert_eq!(order.field, "ranking");
-            assert!(!order.ascending);
-        } else {
-            panic!("Expected Load statement");
-        }
-    }
-
-    #[test]
-    fn test_parse_store() {
-        let stmt = parse(
-            "STORE INTO EPISODIC (incident_id = \"inc-001\", pod = \"payments\") TTL 7d",
-        )
-        .unwrap();
-        if let Statement::Store(s) = stmt {
-            assert_eq!(s.memory_type, MemoryType::Episodic);
-            assert_eq!(s.payload.len(), 2);
-            assert!(s.modifiers.ttl.is_some());
-        } else {
-            panic!("Expected Store statement");
-        }
-    }
-
-    #[test]
-    fn test_parse_link() {
-        let stmt = parse(
-            "LINK FROM PROCEDURAL WHERE pattern_id = \"oom-fix\" \
-             TO EPISODIC WHERE incident_id = \"inc-001\" \
-             TYPE \"applied_to\" WEIGHT 0.95",
-        )
-        .unwrap();
-        if let Statement::Link(l) = stmt {
-            assert_eq!(l.from_type, MemoryType::Procedural);
-            assert_eq!(l.to_type, MemoryType::Episodic);
-            assert_eq!(l.link_type, "applied_to");
-            assert_eq!(l.weight, Some(0.95));
-        } else {
-            panic!("Expected Link statement");
-        }
-    }
-
-    #[test]
-    fn test_parse_pipeline() {
-        let stmt = parse(
-            "PIPELINE bid_decision TIMEOUT 80ms \
-             LOAD FROM TOOLS WHERE task = \"bidding\" LIMIT 3 \
-             | LOOKUP FROM SEMANTIC KEY url = {url}",
-        )
-        .unwrap();
-        if let Statement::Pipeline(p) = stmt {
-            assert_eq!(p.name, "bid_decision");
-            assert_eq!(p.timeout, Some(Duration::from_millis(80)));
-            assert_eq!(p.stages.len(), 2);
-        } else {
-            panic!("Expected Pipeline statement");
-        }
-    }
-
-    #[test]
-    fn test_parse_anonymous_pipeline() {
-        // Anonymous pipeline (no name) - should generate a default name
-        // Grammar requires TIMEOUT so we include it
-        let stmt = parse("PIPELINE TIMEOUT 50ms SCAN FROM WORKING | RECALL FROM EPISODIC WHERE pod = \"test\"").unwrap();
-        if let Statement::Pipeline(p) = stmt {
-            // Anonymous pipelines get "_anonymous" as the default name
-            assert_eq!(p.name, "_anonymous", "Anonymous pipeline should have '_anonymous' name");
-            assert_eq!(p.stages.len(), 2);
-            // Verify first stage is SCAN
-            assert!(matches!(p.stages[0], Statement::Scan(_)));
-            // Verify second stage is RECALL
-            assert!(matches!(p.stages[1], Statement::Recall(_)));
-        } else {
-            panic!("Expected Pipeline statement");
-        }
-    }
-
-    #[test]
-    fn test_parse_pipeline_with_timeout() {
-        // Pipeline with TIMEOUT modifier - grammar requires TIMEOUT
-        let stmt = parse("PIPELINE quick_scan TIMEOUT 100ms SCAN FROM WORKING LIMIT 5");
-        match stmt {
-            Ok(Statement::Pipeline(p)) => {
-                assert_eq!(p.name, "quick_scan");
-                assert!(p.timeout.is_some(), "Pipeline should have TIMEOUT");
-                assert_eq!(p.stages.len(), 1);
-            }
-            Ok(_) => panic!("Expected Pipeline statement"),
-            Err(e) => panic!("Should parse pipeline with timeout: {}", e),
-        }
-    }
-
-    #[test]
-    fn test_parse_reflect() {
-        let stmt = parse(
-            "REFLECT FROM EPISODIC WHERE incident_id = {current}, \
-             FROM PROCEDURAL WHERE pattern_id = {matched} \
-             WITH LINKS TYPE \"applied_to\"",
-        )
-        .unwrap();
-        if let Statement::Reflect(r) = stmt {
-            assert_eq!(r.sources.len(), 2);
-            assert!(matches!(
-                r.with_links,
-                Some(WithLinks::Type { link_type, .. }) if link_type == "applied_to"
-            ));
-        } else {
-            panic!("Expected Reflect statement");
-        }
-    }
-
-    #[test]
-    fn test_parse_forget() {
-        let stmt = parse("FORGET FROM WORKING WHERE temp = true").unwrap();
-        if let Statement::Forget(f) = stmt {
-            assert_eq!(f.memory_type, MemoryType::Working);
-            assert_eq!(f.conditions.len(), 1);
-        } else {
-            panic!("Expected Forget statement");
-        }
-    }
-
-    #[test]
-    fn test_parse_update() {
-        let stmt =
-            parse("UPDATE INTO PROCEDURAL WHERE pattern_id = \"oom-fix\" (confidence = 0.9)")
-                .unwrap();
-        if let Statement::Update(u) = stmt {
-            assert_eq!(u.memory_type, MemoryType::Procedural);
-            assert_eq!(u.conditions.len(), 1);
-            assert_eq!(u.payload.len(), 1);
-        } else {
-            panic!("Expected Update statement");
-        }
-    }
-
-    #[test]
-    fn test_parse_aggregate() {
-        let stmt = parse(
-            "RECALL FROM EPISODIC WHERE strategy = \"tech_news\" \
-             AGGREGATE COUNT(*) AS uses, AVG(ctr) AS avg_ctr \
-             HAVING uses > 10",
-        )
-        .unwrap();
-        if let Statement::Recall(r) = stmt {
-            assert!(r.modifiers.aggregate.is_some());
-            let aggs = r.modifiers.aggregate.unwrap();
-            assert_eq!(aggs.len(), 2);
-            // Verify alias is parsed correctly
-            assert_eq!(aggs[0].alias, Some("uses".to_string()), "COUNT alias should be 'uses'");
-            assert_eq!(aggs[1].alias, Some("avg_ctr".to_string()), "AVG alias should be 'avg_ctr'");
-            assert!(r.modifiers.having.is_some());
-        } else {
-            panic!("Expected Recall statement");
-        }
-    }
-
-    #[test]
-    fn test_parse_with_namespace() {
-        let stmt = parse("STORE INTO WORKING (key = \"value\") NAMESPACE \"agent-k8s\" SCOPE shared")
-            .unwrap();
-        if let Statement::Store(s) = stmt {
-            assert_eq!(s.modifiers.namespace, Some("agent-k8s".to_string()));
-            assert_eq!(s.modifiers.scope, Some(Scope::Shared));
-        } else {
-            panic!("Expected Store statement");
-        }
-    }
-
-    #[test]
-    fn test_parse_min_confidence() {
-        let stmt = parse("RECALL FROM SEMANTIC LIKE $embedding MIN_CONFIDENCE 0.8 LIMIT 5").unwrap();
-        if let Statement::Recall(r) = stmt {
-            assert_eq!(r.modifiers.min_confidence, Some(0.8));
-            assert_eq!(r.modifiers.limit, Some(5));
-        } else {
-            panic!("Expected Recall statement");
-        }
-    }
-
-    #[test]
-    fn test_parse_or_conditions() {
-        // Test OR condition
-        let stmt = parse(r#"RECALL FROM WORKING WHERE status = "active" OR status = "pending""#).unwrap();
-        if let Statement::Recall(r) = stmt {
-            if let Predicate::Where { conditions } = r.predicate {
-                assert_eq!(conditions.len(), 2, "Should have 2 conditions");
-                assert_eq!(conditions[0].logical_op(), None, "First condition has no preceding op");
-                assert_eq!(conditions[1].logical_op(), Some(LogicalOp::Or), "Second condition should have OR");
-            } else {
-                panic!("Expected Where predicate");
-            }
-        } else {
-            panic!("Expected Recall statement");
-        }
-
-        // Test AND condition
-        let stmt = parse(r#"RECALL FROM WORKING WHERE status = "active" AND priority > 5"#).unwrap();
-        if let Statement::Recall(r) = stmt {
-            if let Predicate::Where { conditions } = r.predicate {
-                assert_eq!(conditions.len(), 2);
-                assert_eq!(conditions[0].logical_op(), None);
-                assert_eq!(conditions[1].logical_op(), Some(LogicalOp::And));
-            } else {
-                panic!("Expected Where predicate");
-            }
-        } else {
-            panic!("Expected Recall statement");
-        }
-
-        // Test mixed AND/OR
-        let stmt = parse(r#"RECALL FROM WORKING WHERE a = 1 AND b = 2 OR c = 3"#).unwrap();
-        if let Statement::Recall(r) = stmt {
-            if let Predicate::Where { conditions } = r.predicate {
-                assert_eq!(conditions.len(), 3);
-                assert_eq!(conditions[0].logical_op(), None);
-                assert_eq!(conditions[1].logical_op(), Some(LogicalOp::And));
-                assert_eq!(conditions[2].logical_op(), Some(LogicalOp::Or));
-            } else {
-                panic!("Expected Where predicate");
-            }
-        } else {
-            panic!("Expected Recall statement");
-        }
-    }
-
-    #[test]
-    fn test_parse_reflect_then_store() {
-        // B8: REFLECT THEN STORE should parse
-        let result = parse(
-            r#"REFLECT FROM EPISODIC WHERE campaign = "summer_2026" THEN STORE INTO SEMANTIC (concept = "insight", confidence = 0.75)"#
-        );
-        match result {
-            Ok(Statement::Reflect(r)) => {
-                assert!(r.then_clause.is_some(), "THEN clause should be present");
-                if let Some(then_stmt) = r.then_clause {
-                    assert!(matches!(*then_stmt, Statement::Store(_)), "THEN clause should be STORE");
-                }
-            }
-            Ok(_) => panic!("Expected Reflect statement"),
-            Err(e) => panic!("B8: REFLECT THEN STORE failed to parse: {}", e),
-        }
-    }
-
-    #[test]
-    fn test_parse_or_in_forget() {
-        // B12: OR in FORGET should parse
-        let result = parse(r#"FORGET FROM EPISODIC WHERE campaign = "a" OR campaign = "b""#);
-        match result {
-            Ok(Statement::Forget(f)) => {
-                assert_eq!(f.conditions.len(), 2, "Should have 2 conditions");
-                assert_eq!(f.conditions[1].logical_op(), Some(LogicalOp::Or));
-            }
-            Ok(_) => panic!("Expected Forget statement"),
-            Err(e) => panic!("B12: OR in FORGET failed to parse: {}", e),
-        }
-    }
-
-    #[test]
-    fn test_parse_dotted_field_path() {
-        // Test dotted field path in condition
-        let stmt = parse("RECALL FROM EPISODIC WHERE metadata.pod = \"payments\"").unwrap();
-        if let Statement::Recall(r) = stmt {
-            if let Predicate::Where { conditions } = r.predicate {
-                assert_eq!(conditions[0].field().unwrap(), "metadata.pod");
-            } else {
-                panic!("Expected Where predicate");
-            }
-        } else {
-            panic!("Expected Recall statement");
-        }
-
-        // Test deeply nested field path
-        let stmt = parse("RECALL FROM WORKING WHERE data.nested.field = \"value\"").unwrap();
-        if let Statement::Recall(r) = stmt {
-            if let Predicate::Where { conditions } = r.predicate {
-                assert_eq!(conditions[0].field().unwrap(), "data.nested.field");
-            } else {
-                panic!("Expected Where predicate");
-            }
-        } else {
-            panic!("Expected Recall statement");
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // v0.6: subscriptions and continuous queries
-    // ------------------------------------------------------------------
-
-    #[test]
-    fn test_v06_subscribe_scope_with_kinds() {
-        let stmt = parse(r#"SUBSCRIBE SCOPE "team:billing" KINDS fact, edge FROM NOW"#).unwrap();
-        let Statement::Subscribe(s) = stmt else { panic!("Expected Subscribe") };
-        assert_eq!(s.target, SubscribeTarget::Scope("team:billing".into()));
-        assert_eq!(s.kinds, vec!["fact".to_string(), "edge".to_string()]);
-        assert_eq!(s.start, StartPosition::Now);
-        assert!(s.filter.is_none());
-    }
-
-    #[test]
-    fn test_v06_subscribe_topic_filter_offset() {
-        let stmt =
-            parse(r#"SUBSCRIBE TOPIC "orders.events" WHERE status = "paid" FROM OFFSET 1042"#).unwrap();
-        let Statement::Subscribe(s) = stmt else { panic!("Expected Subscribe") };
-        assert_eq!(s.target, SubscribeTarget::Topic("orders.events".into()));
-        assert_eq!(s.filter.as_ref().map(|f| f.len()), Some(1));
-        assert_eq!(s.start, StartPosition::Offset(1042));
-    }
-
-    #[test]
-    fn test_v06_subscribe_defaults_to_now() {
-        let Statement::Subscribe(s) = parse(r#"subscribe topic "t""#).unwrap() else { panic!() };
-        assert_eq!(s.start, StartPosition::Now);
-        assert!(s.kinds.is_empty());
-    }
-
-    #[test]
-    fn test_v06_unsubscribe_ack_unwatch_handles() {
-        let Statement::Unsubscribe(u) = parse(r#"UNSUBSCRIBE "sub-7f3a""#).unwrap() else { panic!() };
-        assert_eq!(u.subscription, "sub-7f3a");
-        let Statement::Ack(a) = parse("ACK sub_7f3a OFFSET 99").unwrap() else { panic!() };
-        assert_eq!((a.subscription.as_str(), a.offset), ("sub_7f3a", 99));
-        let Statement::Unwatch(w) = parse("UNWATCH $cq").unwrap() else { panic!() };
-        assert_eq!(w.query_id, "$cq");
-    }
-
-    #[test]
-    fn test_v06_publish() {
-        let stmt = parse(r#"PUBLISH TOPIC "orders.events" (order_id = "o-1", status = "paid") TTL 7d"#).unwrap();
-        let Statement::Publish(p) = stmt else { panic!("Expected Publish") };
-        assert_eq!(p.topic, "orders.events");
-        assert_eq!(p.payload.len(), 2);
-        assert_eq!(p.modifiers.ttl, Some(Duration::from_secs(7 * 86400)));
-    }
-
-    #[test]
-    fn test_v06_watch_spec_example() {
-        let stmt = parse(
-            r#"WATCH RECALL FROM SEMANTIC IN SCOPE "agent:42" WHERE predicate = "owns" LIMIT 20 DEBOUNCE 100ms FROM NOW"#,
-        )
-        .unwrap();
-        let Statement::Watch(w) = stmt else { panic!("Expected Watch") };
-        assert_eq!(w.debounce, Some(Duration::from_millis(100)));
-        assert_eq!(w.start, StartPosition::Now);
-        let Statement::Recall(r) = *w.query else { panic!("Expected Recall inside Watch") };
+    fn recall_is_every_read() {
+        let r = recall_of(r#"RECALL FROM SEMANTIC WHERE key = "person:ada" NAMESPACE "crm""#);
         assert_eq!(r.memory_type, MemoryType::Semantic);
-        assert_eq!(r.modifiers.in_scope.as_deref(), Some("agent:42"));
-        assert_eq!(r.modifiers.limit, Some(20));
-        assert!(matches!(r.predicate, Predicate::Where { .. }));
-    }
-
-    #[test]
-    fn test_v06_watch_lookup_from_offset() {
-        let Statement::Watch(w) =
-            parse(r#"WATCH LOOKUP FROM SEMANTIC KEY subject_id = "acct-9" FROM OFFSET 7"#).unwrap()
-        else {
-            panic!()
-        };
-        assert_eq!(w.start, StartPosition::Offset(7));
-        assert!(matches!(*w.query, Statement::Lookup(_)));
-    }
-
-    #[test]
-    fn test_v06_watch_rejects_writes() {
-        assert!(parse(r#"WATCH STORE INTO SEMANTIC (a = 1)"#).is_err());
-        assert!(parse(r#"WATCH REFLECT FROM EPISODIC"#).is_err());
-    }
-
-    #[test]
-    fn test_v06_in_scope_as_modifier() {
-        let Statement::Store(s) = parse(r#"STORE INTO SEMANTIC (fact = "x") IN SCOPE "team:billing" TTL 1d"#).unwrap()
-        else {
-            panic!()
-        };
-        assert_eq!(s.modifiers.in_scope.as_deref(), Some("team:billing"));
-        assert_eq!(s.modifiers.ttl, Some(Duration::from_secs(86400)));
-    }
-
-    #[test]
-    fn test_v06_old_scope_modifier_unchanged() {
-        let Statement::Recall(r) = parse("RECALL FROM SEMANTIC WHERE a = 1 SCOPE shared").unwrap() else {
-            panic!()
-        };
-        assert_eq!(r.modifiers.scope, Some(Scope::Shared));
-        assert!(r.modifiers.in_scope.is_none());
-    }
-
-    #[test]
-    fn test_v011_branch_modifier() {
-        let Statement::Recall(r) = parse(r#"RECALL FROM SEMANTIC WHERE subject = "acme" NAMESPACE "crm" BRANCH "try-new-recall" LIMIT 5"#).unwrap()
-        else {
-            panic!()
-        };
-        assert_eq!(r.modifiers.branch.as_deref(), Some("try-new-recall"));
+        assert!(matches!(&r.predicate, Predicate::Where { conditions } if conditions[0].field() == Some("key")));
         assert_eq!(r.modifiers.namespace.as_deref(), Some("crm"));
-        let Statement::Store(s) = parse(r#"STORE INTO EPISODIC (event = "x") BRANCH "b1""#).unwrap() else {
-            panic!()
-        };
-        assert_eq!(s.modifiers.branch.as_deref(), Some("b1"));
-        let Statement::Recall(r) = parse(r#"RECALL FROM SEMANTIC ALL"#).unwrap() else { panic!() };
-        assert!(r.modifiers.branch.is_none(), "no BRANCH: main");
+        assert_eq!(recall_of("RECALL FROM TOOLS WHERE task = \"bidding\" LIMIT 3").modifiers.limit, Some(3));
+        assert_eq!(recall_of("RECALL FROM WORKING WINDOW LAST 30s").modifiers.window, Some(Window::LastDuration { duration: Duration::from_secs(30) }));
+        assert_eq!(recall_of("RECALL FROM WORKING WINDOW LAST 10").modifiers.window, Some(Window::LastN { count: 10 }));
+        assert_eq!(recall_of("RECALL FROM EPISODIC").predicate, Predicate::All);
+        let r = recall_of(r#"RECALL FROM PROCEDURAL LIKE "pod OOMKilled restart" CONFIDENCE 0.7"#);
+        assert_eq!(r.predicate, Predicate::Like { variable: "pod OOMKilled restart".into(), text: Some("pod OOMKilled restart".into()) });
+        assert_eq!(r.modifiers.confidence, Some(0.7));
+        assert_eq!(recall_of("RECALL FROM SEMANTIC LIKE $q").predicate, Predicate::Like { variable: "q".into(), text: None });
+        assert_eq!(recall_of(r#"RECALL FROM SEMANTIC IN SCOPE "team:x" WHERE a = 1"#).modifiers.in_scope.as_deref(), Some("team:x"));
     }
 
     #[test]
-    fn test_v06_in_operator_still_works() {
-        let Statement::Recall(r) = parse(r#"RECALL FROM EPISODIC WHERE pod IN ["a", "b"] IN SCOPE "agent:1""#).unwrap()
-        else {
-            panic!()
-        };
-        assert_eq!(r.modifiers.in_scope.as_deref(), Some("agent:1"));
+    fn conditions_between_in_and_groups() {
+        let r = recall_of(r#"RECALL FROM EPISODIC WHERE created_at BETWEEN "2026-11-01" AND "2026-11-15" AND (pod = "a" OR pod IN ("b", "c"))"#);
+        let Predicate::Where { conditions } = r.predicate else { panic!() };
+        assert_eq!(conditions[0].operator(), Some(Operator::Between));
+        assert_eq!(conditions[0].value(), Some(&Value::Array(vec![Value::String("2026-11-01".into()), Value::String("2026-11-15".into())])));
+        let Condition::Group { conditions: g, logical_op } = &conditions[1] else { panic!() };
+        assert_eq!(*logical_op, Some(LogicalOp::And));
+        assert_eq!(g[1].operator(), Some(Operator::In));
+        assert_eq!(g[1].logical_op(), Some(LogicalOp::Or));
     }
 
     #[test]
-    fn test_forget_without_where_explains() {
-        for q in ["FORGET FROM WORKING", "FORGET FROM ALL", "UPDATE INTO PROCEDURAL (a = 1)"] {
-            let msg = parse(q).unwrap_err().to_string();
-            assert!(msg.contains("WHERE predicate"), "{q}: {msg}");
-        }
-        assert!(parse(r#"FORGET FROM WORKING WHERE a = "b""#).is_ok());
+    fn writes() {
+        let Statement::Store(s) = ok(r#"STORE INTO EPISODIC (incident = "inc-1", n = 2, tags = ["a"]) TTL 7d NAMESPACE "ops""#) else { panic!() };
+        assert_eq!(s.payload.len(), 3);
+        assert_eq!(s.modifiers.ttl, Some(Duration::from_secs(7 * 86_400)));
+        let Statement::Update(u) = ok(r#"UPDATE INTO SEMANTIC WHERE key = "person:ada" (aliases = ["person:ada-lovelace"], age = null)"#) else { panic!() };
+        assert_eq!(u.payload[1].value, Value::Null);
+        let Statement::Forget(f) = ok(r#"FORGET FROM ALL NAMESPACE "crm-try""#) else { panic!() };
+        assert!(f.conditions.is_empty());
+        assert!(parse("FORGET FROM ALL").unwrap_err().to_string().contains("NAMESPACE"));
+        assert!(parse("UPDATE INTO SEMANTIC (a = 1)").is_err(), "UPDATE needs WHERE");
+        assert!(parse(r#"STORE INTO ALL (a = 1)"#).unwrap_err().to_string().contains("ALL"));
+        assert!(parse(r#"LINK FROM ALL WHERE a = 1 INTO SEMANTIC WHERE b = 2 TYPE "t""#).unwrap_err().to_string().contains("ALL"));
     }
 
     #[test]
-    fn test_v08_follow_links_selection() {
-        let follow = |q: &str| {
-            let Statement::Recall(r) = parse(q).unwrap() else { panic!("{q}") };
-            r.modifiers.follow_links.unwrap()
-        };
-        let f = follow(r#"RECALL FROM SEMANTIC WHERE a = 1 FOLLOW LINKS TYPE "t" DEPTH 2"#);
-        assert_eq!((f.link_type.as_deref(), f.direction, f.min_weight, f.depth), (Some("t"), LinkDirection::Outbound, None, Some(2)));
-        let f = follow(r#"RECALL FROM SEMANTIC WHERE a = 1 FOLLOW LINKS TYPE IN ("a", "b") INBOUND MIN_WEIGHT 0.5 DEPTH 3"#);
-        assert_eq!(f.link_types, ["a", "b"]);
-        assert_eq!((f.link_type, f.direction, f.min_weight, f.depth), (None, LinkDirection::Inbound, Some(0.5), Some(3)));
-        let f = follow(r#"RECALL FROM SEMANTIC WHERE a = 1 FOLLOW LINKS BOTH"#);
-        assert_eq!((f.link_type, f.link_types.len(), f.direction), (None, 0, LinkDirection::Both));
-        let f = follow(r#"RECALL FROM SEMANTIC WHERE a = 1 FOLLOW LINKS ALL MIN_WEIGHT 1"#);
-        assert_eq!((f.link_type, f.min_weight), (None, Some(1.0)));
+    fn links() {
+        let Statement::Link(l) = ok(r#"LINK FROM SEMANTIC WHERE key = "person:ada" INTO SEMANTIC WHERE key = "org:acme" TYPE "works_at" WEIGHT 0.9 NAMESPACE "crm""#) else { panic!() };
+        assert_eq!((l.link_type.as_str(), l.weight, l.namespace.as_deref()), ("works_at", Some(0.9), Some("crm")), "WEIGHT as written (f64, as LinkSelect's)");
+        assert_eq!(l.to_type, MemoryType::Semantic);
+        let Statement::Unlink(u) = ok(r#"UNLINK FROM SEMANTIC WHERE key = "a" INTO EPISODIC WHERE key = "b""#) else { panic!() };
+        assert_eq!((u.to_type, u.link_type), (MemoryType::Episodic, None));
+        assert!(parse(r#"LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" TYPE "t""#).is_err(), "INTO, not TO");
+        let r = recall_of(r#"RECALL FROM SEMANTIC WHERE key = "org:acme" FOLLOW LINKS TYPE ("works_at", "owns") WEIGHT 0.5 DEPTH 2"#);
+        let f = r.modifiers.follow_links.unwrap();
+        assert_eq!((f.select.types.len(), f.select.min_weight, f.depth), (2, Some(0.5), Some(2)));
+        let r = recall_of(r#"RECALL FROM SEMANTIC WHERE key = "a" WITH LINKS"#);
+        assert_eq!(r.modifiers.with_links, Some(LinkSelect::default()));
     }
 
     #[test]
-    fn test_v08_with_links_selection() {
-        let Statement::Lookup(l) = parse(r#"LOOKUP FROM SEMANTIC KEY id = "a" WITH LINKS TYPE IN ("x") BOTH MIN_WEIGHT 0.2"#).unwrap() else {
-            panic!()
-        };
-        assert_eq!(
-            l.modifiers.with_links,
-            Some(WithLinks::Types { link_types: vec!["x".into()], direction: LinkDirection::Both, min_weight: Some(0.2) })
-        );
+    fn namespaces() {
+        assert_eq!(ok(r#"BRANCH FROM "crm" INTO "crm-try""#), Statement::Branch(NamespaceStmt { from: "crm".into(), into: "crm-try".into(), as_of: None }));
+        let Statement::Fork(f) = ok(r#"FORK FROM "crm" INTO "crm-nov" AS OF "2026-11-01T00:00:00Z""#) else { panic!() };
+        assert_eq!(f.as_of, Some(TimePoint::At { time: "2026-11-01T00:00:00Z".into() }));
+        assert_eq!(ok(r#"MERGE FROM "crm-try" INTO "crm" PREFER SOURCE"#), Statement::Merge(MergeStmt { from: "crm-try".into(), into: "crm".into(), prefer: Some(Prefer::Source) }));
+        assert!(parse(r#"BRANCH FROM "a" INTO "a""#).is_err());
+        assert!(parse(r#"MERGE FROM "a" INTO "a""#).is_err());
     }
 
     #[test]
-    fn test_v08_old_link_ast_json_unchanged() {
-        let Statement::Recall(r) = parse(r#"RECALL FROM SEMANTIC WHERE a = 1 WITH LINKS ALL FOLLOW LINKS TYPE "t""#).unwrap() else {
-            panic!()
-        };
-        assert_eq!(serde_json::to_value(&r.modifiers.with_links).unwrap(), serde_json::json!({ "type": "all" }));
-        assert_eq!(serde_json::to_value(&r.modifiers.follow_links).unwrap(), serde_json::json!({ "link_type": "t", "depth": null }));
+    fn history() {
+        let r = recall_of(r#"RECALL FROM SEMANTIC WHERE key = "a" AS OF "2026-11-01T09:00:00Z""#);
+        assert_eq!(r.modifiers.as_of, Some(TimePoint::At { time: "2026-11-01T09:00:00Z".into() }));
+        let r = recall_of(r#"RECALL FROM SEMANTIC WHERE key = "a" WITH HISTORY BETWEEN "2026-11-01" AND $to"#);
+        assert_eq!(r.modifiers.with_history, Some(History { between: Some((TimePoint::At { time: "2026-11-01".into() }, TimePoint::Variable { name: "to".into() })) }));
+        assert_eq!(recall_of(r#"RECALL FROM SEMANTIC WITH HISTORY"#).modifiers.with_history, Some(History::default()));
+        assert!(parse(r#"RECALL FROM SEMANTIC AS OF 2d AGO"#).is_err(), "no AGO");
     }
 
     #[test]
-    fn test_v08_store_fact() {
-        let Statement::Store(st) = parse(r#"STORE INTO SEMANTIC FACT (subject = "person:ada", predicate = "works_at", object = "org:acme", confidence = 0.9)"#).unwrap() else {
-            panic!()
-        };
-        assert_eq!(st.fact, Some(FactMode { multi: false }));
-        let Statement::Store(st) = parse(r#"STORE INTO SEMANTIC FACT MULTI (subject = "person:ada", predicate = "knows", object = "person:bob")"#).unwrap() else {
-            panic!()
-        };
-        assert_eq!(st.fact, Some(FactMode { multi: true }));
-        assert!(parse(r#"STORE INTO SEMANTIC FACT (subject = "a", predicate = "born", value = 1815)"#).is_ok());
-        assert!(parse(r#"STORE INTO SEMANTIC FACT (subject = $s, predicate = $p, object = $o)"#).is_ok());
-        for bad in [
-            r#"STORE INTO EPISODIC FACT (subject = "a", predicate = "p", object = "b")"#,
-            r#"STORE INTO SEMANTIC FACT (subject = "a", object = "b")"#,
-            r#"STORE INTO SEMANTIC FACT (subject = "a", predicate = "p")"#,
-            r#"STORE INTO SEMANTIC FACT (subject = "a", predicate = "p", object = "b", value = 1)"#,
-            r#"STORE INTO SEMANTIC FACT (subject = "a", predicate = "p", object = 3)"#,
-        ] {
-            assert!(parse(bad).is_err(), "{bad}");
-        }
-        // Without FACT: as before (and the AST JSON has no `fact`).
-        let Statement::Store(st) = parse(r#"STORE INTO SEMANTIC (key = "k", subject = "x")"#).unwrap() else { panic!() };
-        assert!(st.fact.is_none());
-        assert!(serde_json::to_value(&st).unwrap().get("fact").is_none());
+    fn flow() {
+        let Statement::Pipeline(p) = ok("PIPELINE bid TIMEOUT 80ms RECALL FROM TOOLS WHERE task = \"bidding\" LIMIT 3 | RECALL FROM SEMANTIC WHERE key = {url} | STORE INTO EPISODIC (url = {url})") else { panic!() };
+        assert_eq!((p.name.as_str(), p.timeout, p.stages.len()), ("bid", Some(Duration::from_millis(80)), 3));
+        let e = parse("PIPELINE STORE INTO EPISODIC (a = 1) | RECALL FROM EPISODIC").unwrap_err().to_string();
+        assert!(e.contains("last stage"), "{e}");
+        let Statement::Subscribe(s) = ok(r#"SUBSCRIBE TOPIC "orders" WHERE status = "paid" NAMESPACE "shop""#) else { panic!() };
+        assert_eq!((s.target, s.namespace.as_deref()), (SubscribeTarget::Topic("orders".into()), Some("shop")));
+        let Statement::Subscribe(s) = ok(r#"SUBSCRIBE RECALL FROM SEMANTIC WHERE kind = "customer" LIMIT 20 NAMESPACE "crm""#) else { panic!() };
+        assert!(matches!(s.target, SubscribeTarget::Query(r) if r.modifiers.namespace.as_deref() == Some("crm")));
+        assert_eq!(ok(r#"UNSUBSCRIBE "sub-7f3a""#), Statement::Unsubscribe(UnsubscribeStmt { subscription: "sub-7f3a".into(), namespace: None }));
+        let Statement::Publish(p) = ok(r#"PUBLISH TOPIC "orders" (order_id = "o-1") TTL 7d NAMESPACE "shop""#) else { panic!() };
+        assert_eq!(p.modifiers.namespace.as_deref(), Some("shop"));
     }
 
     #[test]
-    fn test_v09_group_by() {
-        let Statement::Recall(r) = parse(
-            "RECALL FROM EPISODIC WHERE campaign = \"summer\" GROUP BY url, metadata.scope \
-             AGGREGATE COUNT(*) AS n HAVING n > 1 ORDER BY n DESC LIMIT 10",
-        )
-        .unwrap() else { panic!() };
-        assert_eq!(r.modifiers.group_by, Some(vec!["url".to_string(), "metadata.scope".to_string()]));
-        assert!(r.modifiers.aggregate.is_some() && r.modifiers.having.is_some());
-        // AGGREGATE before GROUP BY parses the same
-        let Statement::Recall(r2) = parse("RECALL FROM EPISODIC WHERE a = 1 AGGREGATE COUNT(*) AS n GROUP BY url").unwrap() else { panic!() };
-        assert_eq!(r2.modifiers.group_by, Some(vec!["url".to_string()]));
+    fn aggregates_and_case() {
+        let r = recall_of("recall from episodic where pod = \"a\" aggregate count(*) as n, avg(ms) as avg_ms group by pod having n > 2 order by n desc");
+        assert_eq!(r.modifiers.aggregate.as_ref().map(|a| a.len()), Some(2));
+        assert_eq!(r.modifiers.order_by, Some(OrderBy { field: "n".into(), ascending: false }));
+        assert!(parse("RECALL FROM EPISODIC GROUP BY pod").unwrap_err().to_string().contains("AGGREGATE"));
     }
 
     #[test]
-    fn test_v09_group_by_and_having_need_aggregate() {
-        for q in ["RECALL FROM EPISODIC WHERE a = 1 GROUP BY url", "RECALL FROM EPISODIC WHERE a = 1 HAVING n > 1"] {
-            let e = parse(q).unwrap_err().to_string();
-            assert!(e.contains("requires AGGREGATE"), "{q}: {e}");
-        }
-        let e = parse("PIPELINE p TIMEOUT 1s RECALL FROM EPISODIC WHERE a = 1 GROUP BY url").unwrap_err().to_string();
-        assert!(e.contains("requires AGGREGATE"), "{e}");
+    fn use_sets_the_namespace_of_what_follows() {
+        assert_eq!(ok(r#"USE "crm""#), Statement::Use("crm".into()));
+        let s = parse_script(r#"USE "crm"; RECALL FROM SEMANTIC WHERE key = "a"; STORE INTO EPISODIC (e = 1) NAMESPACE "ops"; LINK FROM SEMANTIC WHERE key = "a" INTO SEMANTIC WHERE key = "b" TYPE "t";"#, None).unwrap();
+        assert_eq!(s.len(), 3, "the USE itself isn't returned");
+        let Statement::Recall(r) = &s[0] else { panic!() };
+        assert_eq!(r.modifiers.namespace.as_deref(), Some("crm"));
+        let Statement::Store(st) = &s[1] else { panic!() };
+        assert_eq!(st.modifiers.namespace.as_deref(), Some("ops"), "a statement's own NAMESPACE wins");
+        let Statement::Link(l) = &s[2] else { panic!() };
+        assert_eq!(l.namespace.as_deref(), Some("crm"));
+        // A session's namespace before the script; a later USE changes it.
+        let s = parse_script(r#"RECALL FROM WORKING; USE "b"; RECALL FROM WORKING"#, Some("a")).unwrap();
+        let ns = |i: usize| match &s[i] { Statement::Recall(r) => r.modifiers.namespace.clone(), _ => None };
+        assert_eq!((ns(0).as_deref(), ns(1).as_deref()), (Some("a"), Some("b")));
+        // BRANCH names its own namespaces.
+        let s = parse_script(r#"USE "crm"; BRANCH FROM "crm" INTO "crm-try""#, None).unwrap();
+        assert_eq!(s[0], Statement::Branch(NamespaceStmt { from: "crm".into(), into: "crm-try".into(), as_of: None }));
+        assert!(parse("USE crm").is_err(), "a namespace is a string");
+        let steps = script_steps(r#"USE "a"; RECALL FROM WORKING; STORE INTO WORKING (x = 1)"#, None).unwrap();
+        assert_eq!(steps.iter().map(|(i, _)| *i).collect::<Vec<_>>(), [2, 3], "positions as written");
+        assert!(is_script(r#"USE "a""#) && is_script("RECALL FROM WORKING; RECALL FROM WORKING"));
+        assert!(!is_script(r#"RECALL FROM WORKING WHERE a = "x;y";"#) && !is_script("RECALL FROM WORKING"));
     }
 
     #[test]
-    fn test_v09_no_group_by_json_unchanged() {
-        let Statement::Recall(r) = parse("RECALL FROM EPISODIC WHERE a = 1 AGGREGATE COUNT(*) AS n").unwrap() else { panic!() };
-        assert!(serde_json::to_value(&r.modifiers).unwrap().get("group_by").is_none());
-    }
-
-    #[test]
-    fn test_v09_window_on_episodic_recall_only() {
-        let Statement::Recall(r) = parse("RECALL FROM EPISODIC WHERE pod = \"api\" WINDOW LAST 7d").unwrap() else { panic!() };
-        assert!(r.modifiers.window.is_some());
-        parse("RECALL FROM EPISODIC WHERE pod = \"api\" WINDOW TOP 3 BY severity LIMIT 2").unwrap();
-        parse("SCAN FROM WORKING WINDOW LAST 10").unwrap();
+    fn a_read_may_name_several_namespaces() {
+        let r = recall_of(r#"RECALL FROM SEMANTIC LIKE $q NAMESPACE ("crm", "kb") LIMIT 5"#);
+        assert_eq!((r.modifiers.namespace, r.modifiers.namespaces), (None, vec!["crm".to_string(), "kb".to_string()]));
+        assert_eq!(recall_of(r#"RECALL FROM SEMANTIC NAMESPACE ("crm")"#).modifiers.namespace.as_deref(), Some("crm"), "a list of one is one");
+        // USE doesn't add to a list.
+        let s = parse_script(r#"USE "ops"; RECALL FROM SEMANTIC NAMESPACE ("crm", "kb")"#, None).unwrap();
+        let Statement::Recall(r) = &s[0] else { panic!() };
+        assert_eq!((r.modifiers.namespace.as_ref(), r.modifiers.namespaces.len()), (None, 2));
+        // A write is in one namespace.
         for q in [
-            "RECALL FROM SEMANTIC WHERE a = 1 WINDOW LAST 10",
-            "LOOKUP FROM EPISODIC KEY id = \"e\" WINDOW LAST 10",
-            "FORGET FROM EPISODIC WHERE a = 1 WINDOW LAST 10",
+            r#"STORE INTO EPISODIC (a = 1) NAMESPACE ("a", "b")"#,
+            r#"UPDATE INTO SEMANTIC WHERE key = "k" (a = 1) NAMESPACE ("a", "b")"#,
+            r#"FORGET FROM EPISODIC WHERE a = 1 NAMESPACE ("a", "b")"#,
+            r#"LINK FROM SEMANTIC WHERE key = "a" INTO SEMANTIC WHERE key = "b" TYPE "t" NAMESPACE ("a", "b")"#,
         ] {
-            let e = parse(q).unwrap_err().to_string();
-            assert!(e.contains("WINDOW is only valid"), "{q}: {e}");
+            assert!(parse(q).unwrap_err().to_string().contains("one namespace"), "{q}");
         }
     }
 
     #[test]
-    fn test_v10_time_modifiers() {
-        let Statement::Recall(r) = parse("RECALL FROM SEMANTIC WHERE subject = \"person:ada\" AS OF \"2026-10-01\"").unwrap() else { panic!() };
-        assert_eq!(r.modifiers.as_of, Some(TimePoint::At { time: "2026-10-01".into() }));
-        let Statement::Recall(r) = parse("RECALL FROM SEMANTIC WHERE a = 1 VALID AT $t WITH HISTORY LIMIT 5").unwrap() else { panic!() };
-        assert_eq!(r.modifiers.valid_at, Some(TimePoint::Variable { name: "t".into() }));
-        assert!(r.modifiers.with_history);
-        assert_eq!(r.modifiers.limit, Some(5));
-        let Statement::Lookup(l) = parse("LOOKUP FROM PROCEDURAL KEY pattern_id = \"p\" AS OF 7d AGO").unwrap() else { panic!() };
-        assert_eq!(l.modifiers.as_of, Some(TimePoint::Ago { duration: Duration::from_secs(7 * 86_400) }));
-        // WITH LINKS still parses; an alias before AS OF still does.
-        parse("RECALL FROM SEMANTIC WHERE a = 1 WITH LINKS ALL").unwrap();
-        let Statement::Recall(r) = parse("RECALL FROM SEMANTIC WHERE a = 1 AGGREGATE COUNT(*) AS n AS OF 1d AGO").unwrap() else { panic!() };
-        assert_eq!(r.modifiers.aggregate.as_ref().unwrap()[0].alias.as_deref(), Some("n"));
-        assert!(r.modifiers.as_of.is_some());
-        let Statement::Recall(r) = parse("RECALL FROM SEMANTIC WHERE a = 1 AGGREGATE COUNT(*) AS OF 1d AGO").unwrap() else { panic!() };
-        assert!(r.modifiers.as_of.is_some() && r.modifiers.aggregate.as_ref().unwrap()[0].alias.is_none());
-    }
-
-    #[test]
-    fn test_v12_namespace_on_links_and_topics() {
-        let Statement::Link(l) = parse(r#"LINK FROM SEMANTIC WHERE key = "a" TO EPISODIC WHERE key = "b" TYPE "t" WEIGHT 0.5 NAMESPACE "p""#).unwrap() else { panic!() };
-        assert_eq!((l.weight, l.namespace.as_deref()), (Some(0.5), Some("p")));
-        let Statement::Link(l) = parse(r#"LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" TYPE "t" NAMESPACE "p""#).unwrap() else { panic!() };
-        assert_eq!((l.weight, l.namespace.as_deref()), (None, Some("p")));
-        let Statement::Link(l) = parse(r#"LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" TYPE "t" WEIGHT 0.9"#).unwrap() else { panic!() };
-        assert_eq!((l.weight, l.namespace), (Some(0.9), None));
-        let Statement::UpdateLink(u) = parse(r#"UPDATE LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" TYPE "t" WEIGHT 0.2 NAMESPACE "p""#).unwrap() else { panic!() };
-        assert_eq!((u.link_type.as_deref(), u.namespace.as_deref()), (Some("t"), Some("p")));
-        let Statement::Unlink(u) = parse(r#"UNLINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" NAMESPACE "p""#).unwrap() else { panic!() };
-        assert_eq!((u.link_type, u.namespace.as_deref()), (None, Some("p")));
-        let Statement::Unlink(u) = parse(r#"UNLINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" TYPE "t" NAMESPACE "p""#).unwrap() else { panic!() };
-        assert_eq!((u.link_type.as_deref(), u.namespace.as_deref()), (Some("t"), Some("p")));
-        // A link on a memory branch (v0.11): BRANCH after the NAMESPACE.
-        let Statement::Link(l) = parse(r#"LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" TYPE "t" NAMESPACE "p" BRANCH "b1""#).unwrap() else { panic!() };
-        assert_eq!((l.namespace.as_deref(), l.branch.as_deref()), (Some("p"), Some("b1")));
-        let Statement::Unlink(u) = parse(r#"UNLINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" NAMESPACE "p" BRANCH "b1""#).unwrap() else { panic!() };
-        assert_eq!(u.branch.as_deref(), Some("b1"));
-        let Statement::UpdateLink(u) = parse(r#"UPDATE LINK FROM SEMANTIC WHERE key = "a" TO SEMANTIC WHERE key = "b" WEIGHT 0.3 NAMESPACE "p" BRANCH "b1""#).unwrap() else { panic!() };
-        assert_eq!(u.branch.as_deref(), Some("b1"));
-        // A topic is not on a branch.
-        assert!(parse(r#"SUBSCRIBE TOPIC "t" NAMESPACE "p" BRANCH "b1""#).is_err());
-        let Statement::Subscribe(s) = parse(r#"SUBSCRIBE TOPIC "orders" FROM NOW NAMESPACE "p""#).unwrap() else { panic!() };
-        assert_eq!(s.namespace.as_deref(), Some("p"));
-        let Statement::Unsubscribe(u) = parse(r#"UNSUBSCRIBE "sub-1" NAMESPACE "p""#).unwrap() else { panic!() };
-        assert_eq!((u.subscription.as_str(), u.namespace.as_deref()), ("sub-1", Some("p")));
-        let Statement::Ack(a) = parse(r#"ACK "sub-1" OFFSET 7 NAMESPACE "p""#).unwrap() else { panic!() };
-        assert_eq!((a.offset, a.namespace.as_deref()), (7, Some("p")));
-        let Statement::Ack(a) = parse(r#"ACK "sub-1" OFFSET 7"#).unwrap() else { panic!() };
-        assert_eq!(a.namespace, None);
-        let Statement::Publish(p) = parse(r#"PUBLISH TOPIC "orders" (n = 1) NAMESPACE "p""#).unwrap() else { panic!() };
-        assert_eq!(p.modifiers.namespace.as_deref(), Some("p"));
-    }
-
-    #[test]
-    fn test_v10_time_modifiers_validation() {
-        for (q, msg) in [
-            ("RECALL FROM WORKING WHERE a = 1 AS OF 1d AGO", "aren't valid on WORKING"),
-            ("RECALL FROM PROCEDURAL WHERE a = 1 VALID AT \"2026-01-01\"", "VALID AT is only valid on SEMANTIC"),
-            ("SCAN FROM WORKING WITH HISTORY", "only valid on RECALL and LOOKUP"),
-            ("FORGET FROM SEMANTIC WHERE a = 1 AS OF 1d AGO", "only valid on RECALL and LOOKUP"),
+    fn what_was_removed_does_not_parse() {
+        for q in [
+            r#"LOOKUP FROM SEMANTIC KEY id = "a""#,
+            "SCAN FROM WORKING",
+            r#"LOAD FROM TOOLS WHERE task = "x""#,
+            r#"STORE INTO SEMANTIC FACT (subject = "a", predicate = "p", object = "b")"#,
+            r#"MERGE ENTITY "a" INTO "b""#,
+            r#"RECALL FROM SEMANTIC WHERE a = 1 BRANCH "b""#,
+            r#"RECALL FROM SEMANTIC WHERE a = 1 VALID AT "2026-01-01""#,
+            r#"RECALL FROM SEMANTIC LIKE $q MIN_CONFIDENCE 0.7"#,
+            r#"ACK "s" OFFSET 1"#,
+            r#"WATCH RECALL FROM SEMANTIC"#,
+            r#"RECALL FROM SEMANTIC WHERE a = 1 SCOPE private"#,
+            r#"RECALL FROM EPISODIC WHERE a = 1 TIMEOUT 5s"#,
         ] {
-            let e = parse(q).unwrap_err().to_string();
-            assert!(e.contains(msg), "{q}: {e}");
+            assert!(parse(q).is_err(), "{q} should not parse");
         }
-    }
-
-    #[test]
-    fn test_v10_merge() {
-        let s = parse(r#"MERGE ENTITY "person:ada-lovelace" INTO "person:ada""#).unwrap();
-        assert_eq!(s, Statement::Merge(MergeStmt { from: "person:ada-lovelace".into(), into: "person:ada".into() }));
-        assert!(parse(r#"merge entity "a" into "b""#).is_ok());
-        assert!(parse(r#"MERGE ENTITY "a" INTO "a""#).unwrap_err().to_string().contains("two different entities"));
-        assert!(parse(r#"MERGE ENTITY "" INTO "a""#).is_err());
-        assert!(parse(r#"MERGE ENTITY "a""#).is_err());
-    }
-
-    #[test]
-    fn test_v10_no_time_json_unchanged() {
-        let json = serde_json::to_string(&parse("RECALL FROM SEMANTIC WHERE a = 1 LIMIT 2").unwrap()).unwrap();
-        assert!(!json.contains("as_of") && !json.contains("with_history") && !json.contains("valid_at"), "{json}");
     }
 }
